@@ -921,6 +921,58 @@ function stopHideRecognize() {
   if (hrStyle) { hrStyle.remove(); hrStyle = null; }
 }
 
+// ================== 7. 歌词对齐切换 ==================
+
+var laStyle = null;
+var laTimer = null;
+
+function laGetCSS(align, spacing) {
+  var rowJustify = align === 'center' ? 'center' : (align === 'left' ? 'flex-start' : 'flex-end');
+  var rules = [
+    '.lyric-scroller .lyric-row { justify-content: ' + rowJustify + ' !important; }',
+    '.lyric-scroller .lyric-line { text-align: ' + align + ' !important; }' + (align === 'left' ? '; padding-left: 120px !important' : ''),
+    '.lyric-mode .song-header { text-align: ' + align + ' !important; }',
+    '.static-lyric-list { text-align: ' + align + ' !important; }',
+    '.static-lyric-row { text-align: ' + align + ' !important; }',
+    align === 'left' ? '.cover-mode .lyric-side { padding-left: 48px !important; }' : undefined,
+  ];
+  // 行距（0 = 不覆盖，使用默认）
+  if (spacing !== undefined && spacing !== 0) {
+    rules.push('.lyric-scroller .lyric-row:not(:last-child) { margin-bottom: ' + spacing + 'px !important; }');
+  }
+  return rules.filter(function(s) { return s; }).join('\n');
+}
+
+function laApply(align, spacing) {
+  laRemove();
+  var s = document.createElement('style');
+  s.id = 'zhs-la-style';
+  s.textContent = laGetCSS(align, spacing);
+  document.head.appendChild(s);
+  laStyle = s;
+}
+
+function laRemove() {
+  if (laStyle) { laStyle.remove(); laStyle = null; }
+}
+
+function startLyricAlign(align) {
+  align = align || 'center';
+  var spacing = featureState.lyricSpacing || 0;
+  if (laTimer) return;
+  laTimer = setInterval(function() {
+    var scroller = document.querySelector('.lyric-scroller');
+    if (scroller) {
+      laApply(align, spacing);
+    }
+  }, 500);
+}
+
+function stopLyricAlign() {
+  if (laTimer) { clearInterval(laTimer); laTimer = null; }
+  laRemove();
+}
+
 // ================== 设置面板 ==================
 
 var featureState = {};
@@ -931,6 +983,8 @@ async function loadFeatureState() {
     // 兼容旧版本，新功能默认启用
     if (saved.dailyPlay === undefined) saved.dailyPlay = true;
     if (saved.clickToPlay === undefined) saved.clickToPlay = true;
+    if (saved.lyricAlign === undefined) saved.lyricAlign = 'center';
+    if (saved.lyricSpacing === undefined) saved.lyricSpacing = 0;
     featureState = saved;
   } else {
     featureState = {
@@ -943,6 +997,8 @@ async function loadFeatureState() {
       pluginBtn: true,
       effect: false,
       effectMode: 'snow',
+      lyricAlign: 'center',
+      lyricSpacing: 0,
     };
   }
 }
@@ -966,6 +1022,7 @@ export async function activate(_ctx) {
   if (featureState.hideRecognize) startHideRecognize();
   if (featureState.pluginBtn) startPluginBtn();
   if (featureState.effect) startEffect(featureState.effectMode || 'snow');
+  startLyricAlign(featureState.lyricAlign || 'center');
 
   var h = ctx.vue.h;
 
@@ -985,6 +1042,8 @@ export async function activate(_ctx) {
         ],
       });
       var currentEffectMode = ctx.vue.ref(featureState.effectMode || 'snow');
+      var currentAlign = ctx.vue.ref(featureState.lyricAlign || 'center');
+      var currentSpacing = ctx.vue.ref(featureState.lyricSpacing || 0);
 
       function switchEffectMode(mode) {
         currentEffectMode.value = mode;
@@ -1051,6 +1110,71 @@ export async function activate(_ctx) {
               return toggleRow(f.icon, f.label, f.desc, f.enabled, function() { f.enabled = !f.enabled; });
             })
           ),
+          // 歌词对齐 + 行距（同一排）
+          h('div', { style: { display: 'grid', 'grid-template-columns': '1fr 1fr', gap: '6px', padding: '8px 6px', 'border-radius': '8px', background: 'var(--card-bg, rgba(255,255,255,0.04))' } }, [
+            // 第一列：歌词对齐
+            h('div', { style: { display: 'flex', 'align-items': 'center', gap: '4px' } }, [
+              h('span', { style: { 'font-size': '11px', color: 'var(--color-text-secondary)', 'flex-shrink': '0' } }, '📝 歌词对齐'),
+              ['left', 'center', 'right'].map(function(a) {
+                var active = currentAlign.value === a;
+                var label = { left: '左对齐', center: '居中', right: '右对齐' }[a];
+                return h('div', {
+                  key: a,
+                  style: {
+                    cursor: 'pointer', padding: '3px 8px', 'border-radius': '5px',
+                    'font-size': '12px', 'font-weight': active ? '600' : '400',
+                    background: active ? 'var(--color-primary, #4caf50)' : 'transparent',
+                    color: active ? '#fff' : 'var(--color-text-secondary)',
+                    border: active ? '1px solid var(--color-primary, #4caf50)' : '1px solid transparent',
+                    transition: 'all 0.15s',
+                  },
+                  onClick: function() {
+                    currentAlign.value = a;
+                    featureState.lyricAlign = a;
+                    saveFeatureState();
+                    stopLyricAlign();
+                    startLyricAlign(a);
+                  },
+                }, label);
+              }),
+            ]),
+            // 第二列：歌词行距
+            h('div', { style: { display: 'flex', 'align-items': 'center', gap: '4px' } }, [
+              h('span', { style: { 'font-size': '11px', color: 'var(--color-text-secondary)', 'flex-shrink': '0' } }, '📏 歌词行距'),
+              h('input', {
+                type: 'range',
+                min: -20,
+                max: 30,
+                step: 1,
+                value: currentSpacing.value,
+                style: { flex: '1', height: '3px', cursor: 'pointer', 'accent-color': 'var(--color-primary, #4caf50)' },
+                onInput: function(e) {
+                  var v = parseInt(e.target.value) || 0;
+                  currentSpacing.value = v;
+                  featureState.lyricSpacing = v;
+                  saveFeatureState();
+                  stopLyricAlign();
+                  startLyricAlign(currentAlign.value || 'center');
+                },
+              }),
+              h('div', { style: { display: 'flex', 'align-items': 'center', gap: '2px' } }, [
+                h('span', { style: { 'font-size': '11px', 'font-weight': '600', 'min-width': '24px', 'text-align': 'right', color: currentSpacing.value === 0 ? 'var(--color-text-secondary)' : 'var(--color-primary, #4caf50)' } },
+                  currentSpacing.value === 0 ? '—' : currentSpacing.value + 'px'
+                ),
+                h('span', { style: { 'font-size': '10px', cursor: 'pointer', padding: '1px 5px', 'border-radius': '4px', color: currentSpacing.value === 0 ? 'var(--color-text-secondary)' : 'var(--color-primary, #4caf50)', border: '1px solid ' + (currentSpacing.value === 0 ? 'var(--color-text-secondary)' : 'var(--color-primary, #4caf50)'), opacity: '0.7' },
+                  onClick: function() {
+                    if (currentSpacing.value !== 0) {
+                      currentSpacing.value = 0;
+                      featureState.lyricSpacing = 0;
+                      saveFeatureState();
+                      stopLyricAlign();
+                      startLyricAlign(currentAlign.value || 'center');
+                    }
+                  }
+                }, '默认'),
+              ]),
+            ]),
+          ]),
           h('div', {
             style: {
               display: 'flex', gap: '3px',
@@ -1103,6 +1227,7 @@ export function deactivate() {
   stopHideRecognize();
   stopPluginBtn();
   stopEffect();
+  stopLyricAlign();
 
   if (disposeSettings) { disposeSettings(); disposeSettings = null; }
   ctx = null;
