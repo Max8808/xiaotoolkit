@@ -828,11 +828,13 @@ function lhInjectCSS() {
   var s = document.createElement('style');
   s.id = 'zhs-lh-style';
   s.textContent = [
-    // 7 个按钮永久隐藏
-    '.lyric-page-toolbar, .overlay-header {',
-    '  display: none !important;',
+    // 7 个按钮统一隐藏类
+    '.zhs-lh-hidden {',
+    '  visibility: hidden !important;',
+    '  opacity: 0 !important;',
+    '  transition: visibility 0s 2s, opacity 0.5s ease !important;',
     '}',
-    // 底部控制栏 2 秒无操作自动隐藏，鼠标移动恢复
+    // 底部控制栏独立过渡
     '.lyric-page-body .lyric-bar {',
     '  transition: visibility 0s 0.5s, opacity 0.5s ease !important;',
     '}',
@@ -854,9 +856,15 @@ function lhReset() {
   var body = document.querySelector('.lyric-page-body');
   if (!body) return;
   body.classList.remove('idle');
+  document.querySelectorAll('.lyric-page-toolbar, .overlay-header').forEach(function(el) {
+    el.classList.remove('zhs-lh-hidden');
+  });
   clearTimeout(lhTimer);
   lhTimer = setTimeout(function() {
     body.classList.add('idle');
+    document.querySelectorAll('.lyric-page-toolbar, .overlay-header').forEach(function(el) {
+      el.classList.add('zhs-lh-hidden');
+    });
   }, 2000);
 }
 
@@ -871,6 +879,9 @@ function lhCleanup() {
   }
   var body = document.querySelector('.lyric-page-body');
   if (body) body.classList.remove('idle');
+  document.querySelectorAll('.lyric-page-toolbar, .overlay-header').forEach(function(el) {
+    el.classList.remove('zhs-lh-hidden');
+  });
 }
 
 function startLyricHide() {
@@ -967,7 +978,7 @@ export async function activate(_ctx) {
           { id: 'hidePlaylist', icon: '📋', label: '收藏歌单自动切换', desc: '启动时自动切换到收藏歌单', enabled: featureState.hidePlaylist },
           { id: 'clickToPlay', icon: '👆', label: '单击播放', desc: '单击歌曲任意位置即可播放', enabled: featureState.clickToPlay },
           { id: 'dailyPlay', icon: '🎵', label: '首页卡片一键播放', desc: '每日推荐/排行榜卡片上直接播放，不跳转', enabled: featureState.dailyPlay },
-          { id: 'lyricHide', icon: '🙈', label: '歌词界面完全沉浸', desc: '歌词界面7个工具栏按钮永久隐藏，底部控制栏2秒无操作自动隐藏', enabled: featureState.lyricHide },
+          { id: 'lyricHide', icon: '🙈', label: '歌词界面完全沉浸', desc: '控制栏和工具栏自动隐藏', enabled: featureState.lyricHide },
           { id: 'hideRecognize', icon: '🚫', label: '隐藏听歌识曲', desc: '隐藏顶部导航栏的听歌识曲按钮', enabled: featureState.hideRecognize },
           { id: 'pluginBtn', icon: '🔧', label: '顶部插件管理入口', desc: '搜索框右侧添加插件快捷按钮', enabled: featureState.pluginBtn },
           { id: 'effect', icon: '🎆', label: '桌面特效', desc: '10种粒子特效', enabled: featureState.effect },
