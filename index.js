@@ -856,13 +856,13 @@ function lhReset() {
   var body = document.querySelector('.lyric-page-body');
   if (!body) return;
   body.classList.remove('idle');
-  document.querySelectorAll('.lyric-page-toolbar, .overlay-header').forEach(function(el) {
+  document.querySelectorAll('.lyric-page-toolbar, .overlay-header, .lyric-page-tools').forEach(function(el) {
     el.classList.remove('zhs-lh-hidden');
   });
   clearTimeout(lhTimer);
   lhTimer = setTimeout(function() {
     body.classList.add('idle');
-    document.querySelectorAll('.lyric-page-toolbar, .overlay-header').forEach(function(el) {
+    document.querySelectorAll('.lyric-page-toolbar, .overlay-header, .lyric-page-tools').forEach(function(el) {
       el.classList.add('zhs-lh-hidden');
     });
   }, 2000);
@@ -879,7 +879,7 @@ function lhCleanup() {
   }
   var body = document.querySelector('.lyric-page-body');
   if (body) body.classList.remove('idle');
-  document.querySelectorAll('.lyric-page-toolbar, .overlay-header').forEach(function(el) {
+  document.querySelectorAll('.lyric-page-toolbar, .overlay-header, .lyric-page-tools').forEach(function(el) {
     el.classList.remove('zhs-lh-hidden');
   });
 }
