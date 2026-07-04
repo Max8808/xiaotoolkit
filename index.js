@@ -926,16 +926,24 @@ function stopHideRecognize() {
 var laStyle = null;
 var laTimer = null;
 
-function laGetCSS(align, spacing) {
+function laGetCSS(align, spacing, padding) {
   var rowJustify = align === 'center' ? 'center' : (align === 'left' ? 'flex-start' : 'flex-end');
+  padding = padding || 180;
   var rules = [
-    '.lyric-scroller .lyric-row { justify-content: ' + rowJustify + ' !important; }',
-    '.lyric-scroller .lyric-line { text-align: ' + align + ' !important; }' + (align === 'left' ? '; padding-left: 120px !important' : ''),
+    '.lyric-scroller .lyric-row { justify-content: ' + rowJustify + ' !important; position: relative; }',
+    '.lyric-scroller .lyric-line { text-align: ' + align + ' !important; }',
+    align === 'left' ? '.lyric-scroller { padding-left: ' + padding + 'px !important; }' : (align === 'right' ? '.lyric-scroller { padding-right: ' + padding + 'px !important; }' : undefined),
     '.lyric-mode .song-header { text-align: ' + align + ' !important; }',
     '.static-lyric-list { text-align: ' + align + ' !important; }',
     '.static-lyric-row { text-align: ' + align + ' !important; }',
-    align === 'left' ? '.cover-mode .lyric-side { padding-left: 48px !important; }' : undefined,
+    align === 'left' ? '.cover-mode .lyric-side { padding-left: 108px !important; }' : undefined,
   ];
+  // 当前演唱行前加引导圆点
+  if (align === 'left') {
+    rules.push('.lyric-scroller .lyric-line[data-echo-lyric-current=\"true\"]::before { content: \"\"; position: absolute; left: -34px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; border-radius: 50%; background: var(--color-primary); opacity: 0.8; pointer-events: none; }');
+  } else if (align === 'right') {
+    rules.push('.lyric-scroller .lyric-line[data-echo-lyric-current=\"true\"]::before { content: \"\"; position: absolute; right: -34px; left: auto; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; border-radius: 50%; background: var(--color-primary); opacity: 0.8; pointer-events: none; }');
+  }
   // 行距（0 = 不覆盖，使用默认）
   if (spacing !== undefined && spacing !== 0) {
     rules.push('.lyric-scroller .lyric-row:not(:last-child) { margin-bottom: ' + spacing + 'px !important; }');
@@ -945,9 +953,10 @@ function laGetCSS(align, spacing) {
 
 function laApply(align, spacing) {
   laRemove();
+  var padding = 180;
   var s = document.createElement('style');
   s.id = 'zhs-la-style';
-  s.textContent = laGetCSS(align, spacing);
+  s.textContent = laGetCSS(align, spacing, padding);
   document.head.appendChild(s);
   laStyle = s;
 }
