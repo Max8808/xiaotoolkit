@@ -1,6 +1,6 @@
 // ===== 小功能 =====
 // Author: 张三
-// 小功能：热门排序 + 收藏歌单自动切换 + 单击播放 + 首页卡片一键播放(每日推荐/排行榜) + 歌词界面完全沉浸 + 隐藏听歌识曲 + 顶部插件按钮 + 10种桌面特效
+// 小功能：热门排序 + 收藏歌单自动切换 + 单击播放 + 歌词界面完全沉浸 + 隐藏听歌识曲 + 顶部插件按钮 + 10种桌面特效 + 歌单自适应布局 + 搜索历史
 // 注意：右键下载已独立为单独插件，如需使用请安装 right-click-download
 // 在插件设置面板中可独立开关每个功能
 
@@ -372,48 +372,6 @@ function stopArtistSort() {
   _asDoneUrl = '';
 }
 
-// ================= 2. 收藏歌单自动切换 =================
-// 启动后等 sidebar 渲染，自动切换到收藏歌单 tab
-// 点击成功后会一直保持，直到用户手动切回
-
-function hpClickFavorite() {
-  var tabs = document.querySelectorAll('.sidebar-playlist-tab');
-  for (var i = 0; i < tabs.length; i++) {
-    if (tabs[i].textContent.indexOf('收藏歌单') !== -1) {
-      tabs[i].click();
-      return true;
-    }
-  }
-  var rail = document.querySelector('.sidebar-rail-tabs');
-  if (rail) {
-    var rTabs = rail.querySelectorAll('.sidebar-rail-tab');
-    for (var j = 0; j < rTabs.length; j++) {
-      if (rTabs[j].textContent.indexOf('收藏歌单') !== -1) {
-        rTabs[j].click();
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-var _hpTimer = null;
-
-function startHidePlaylist() {
-  if (_hpTimer) return;
-  function tryClick(attempts) {
-    if (hpClickFavorite()) { _hpTimer = null; return; }
-    if (attempts < 50) {
-      _hpTimer = setTimeout(function() { tryClick(attempts + 1); }, 200);
-    }
-  }
-  setTimeout(function() { tryClick(0); }, 1000); // 给 sidebar 1 秒渲染时间
-}
-
-function stopHidePlaylist() {
-  if (_hpTimer) { clearTimeout(_hpTimer); _hpTimer = null; }
-}
-
 // ================ 3. 单击任意位置播放 ================
 // 单击歌曲列表的任意位置（歌名、歌手等）即可播放
 // 不影响已有按钮操作（播放图标、菜单等）
@@ -452,369 +410,8 @@ function stopClickToPlay() {
 }
 
 // ================ 4. 首页卡片一键播放 ================
-// 点击每日推荐/排行榜卡片的播放按钮或图标区域，直接播放，不跳转页面
-
-var _dailyDispose = null;
-var _dailyPlaying = false;
-
-function extractDailySongs(body) {
-  // 模仿 extractList 逻辑，从 Kugou API 响应中提取歌曲列表
-  if (!body || typeof body !== 'object') {
-    console.log('[xiaotoolkit] extractDailySongs: body不是对象', typeof body);
-    return [];
-  }
-  var data = body.data;
-  console.log('[xiaotoolkit] extractDailySongs: body keys=', Object.keys(body), '有data=', !!data);
-
-  if (!data || typeof data !== 'object') return [];
-
-  var candidates = [
-    data.songs && data.songs.list,
-    data.songs && data.songs.songs,
-    data.list,
-    data.info,
-    data.song_list,
-    data.songlist,
-    data.songs,
-  ];
-
-  for (var i = 0; i < candidates.length; i++) {
-    if (Array.isArray(candidates[i]) && candidates[i].length > 0) {
-      console.log('[xiaotoolkit] 在 candidates[' + i + '] 找到歌曲:', candidates[i].length);
-      return candidates[i];
-    }
-  }
-
-  // 也检查顶层数组
-  if (Array.isArray(body.list)) { console.log('[xiaotoolkit] 在 body.list 找到'); return body.list; }
-  if (Array.isArray(body.songs)) { console.log('[xiaotoolkit] 在 body.songs 找到'); return body.songs; }
-  if (Array.isArray(body.data)) { console.log('[xiaotoolkit] 在 body.data 找到'); return body.data; }
-
-  console.log('[xiaotoolkit] extractDailySongs 未找到任何歌曲列表');
-  return [];
-}
-
-function pickValue() {
-  for (var i = 0; i < arguments.length; i++) {
-    var v = arguments[i];
-    if (v !== undefined && v !== null && v !== '') return v;
-  }
-  return '';
-}
-
-function parseIntSafe(v, fallback) {
-  if (v === undefined || v === null) return fallback || 0;
-  var n = parseInt(v, 10);
-  return isNaN(n) ? (fallback || 0) : n;
-}
-
-// 复刻官方 formatPic：替换 {size} 占位符 + 补全协议
-function formatPic(value) {
-  if (!value) return '';
-  var pic = String(value).replace(/\{size\}/g, '400');
-  if (pic.indexOf('//') === 0) pic = 'https:' + pic;
-  return pic;
-}
-
-// 复刻官方 normalizeCoverUrl：协议统一 + 域名替换
-function normalizeCoverUrl(url, size) {
-  size = size || 400;
-  var raw = String(url || '').trim();
-  if (!raw) return '';
-  var cover = raw.replace('http://', 'https://');
-  if (cover.indexOf('{size}') !== -1) {
-    cover = cover.replace(/\{size\}/g, String(size));
-  }
-  return cover.replace(/c1\.kgimg\.com/g, 'imge.kugou.com');
-}
-
-function resolveCover(url, size) {
-  return normalizeCoverUrl(formatPic(url), size);
-}
-
-function mapDailySong(item) {
-  var record = item || {};
-  var transParam = record.trans_param || {};
-  var singer = pickValue(record.author_name, record.singername, record.singer, record.artist, '');
-  var name = pickValue(record.songname, record.filename, record.name, record.title, '未知歌曲');
-  var hash = pickValue(record.hash, record.FileHash, record.hash_128, '');
-  var id = pickValue(record.mixsongid, record.audio_id, record.album_audio_id, hash, '');
-  var durationRaw = parseIntSafe(pickValue(record.time_length, record.timelength, record.duration, 0));
-  var duration = durationRaw > 100000 ? Math.floor(durationRaw / 1000) : durationRaw;
-  // 复刻官方 mapTopSong 封面字段顺序：album_sizable_cover > sizable_cover > cover > pic > img > union_cover
-  var rawCover = pickValue(
-    record.album_sizable_cover, record.sizable_cover,
-    record.cover, record.pic, record.img,
-    transParam.union_cover, ''
-  );
-  var cover = resolveCover(rawCover, 400);
-  var album = pickValue(record.album_name, record.albumname, record.album, '');
-
-  return {
-    id: String(id),
-    songId: String(pickValue(record.songid, record.song_id, record.audio_id, '')),
-    title: name,
-    name: name,
-    artist: String(singer || '未知歌手'),
-    duration: duration,
-    coverUrl: cover,
-    cover: cover,
-    audioUrl: '',
-    hash: String(hash),
-    mixSongId: parseIntSafe(id, 0),
-    album: String(album),
-    albumName: String(album),
-    singers: singer ? [{ name: String(singer) }] : [],
-    artists: singer ? [{ name: String(singer) }] : [],
-  };
-}
-
-function mapRankSong(item) {
-  // 简版 mapRankSong，复刻官方 mapRankSong
-  var record = item || {};
-  var audioInfo = record.audio_info || {};
-  var albumInfo = record.album_info || {};
-  var transParam = record.trans_param || {};
-
-  var singer = record.author_name || record.singername || record.singer || '';
-  var name = record.songname || record.name || '未知歌曲';
-  var hash = audioInfo.hash_128 || audioInfo.hash || record.hash || '';
-  var id = record.audio_id || record.mixsongid || audioInfo.audio_id || hash;
-  var durationRaw = parseIntSafe(audioInfo.duration_128 || audioInfo.duration || 0);
-  var duration = durationRaw > 100000 ? Math.floor(durationRaw / 1000) : durationRaw;
-  // 复刻官方 mapRankSong 封面字段顺序：albumInfo.sizable_cover > union_cover > img > pic
-  var rawCover = pickValue(
-    albumInfo.sizable_cover, transParam.union_cover,
-    record.img, record.pic, ''
-  );
-  var cover = resolveCover(rawCover, 400);
-  var album = albumInfo.album_name || record.album_name || '';
-
-  return {
-    id: String(id),
-    songId: String(record.audio_id || ''),
-    title: name,
-    name: name,
-    artist: String(singer || '未知歌手'),
-    duration: duration,
-    coverUrl: cover,
-    cover: cover,
-    audioUrl: '',
-    hash: String(hash),
-    mixSongId: parseIntSafe(id, 0),
-    album: String(album),
-    albumName: String(album),
-    singers: singer ? [{ name: String(singer) }] : [],
-    artists: singer ? [{ name: String(singer) }] : [],
-  };
-}
-
-async function playDailyRecommend() {
-  if (_dailyPlaying) return;
-  _dailyPlaying = true;
-
-  try {
-    // 从 pinia store 构建认证头（复刻 buildAuthHeader 逻辑）
-    var piniaState = ctx.pinia.state.value;
-    var userInfo = piniaState.user && piniaState.user.info;
-    var deviceInfo = piniaState.device && piniaState.device.info;
-
-    var authParts = [];
-    if (userInfo) {
-      if (userInfo.token) authParts.push('token=' + userInfo.token);
-      if (userInfo.userid) authParts.push('userid=' + userInfo.userid);
-      if (userInfo.t1) authParts.push('t1=' + userInfo.t1);
-    }
-    if (deviceInfo) {
-      if (deviceInfo.dfid) authParts.push('dfid=' + deviceInfo.dfid);
-      if (deviceInfo.mid) authParts.push('KUGOU_API_MID=' + deviceInfo.mid);
-      if (deviceInfo.uuid) authParts.push('uuid=' + deviceInfo.uuid);
-      if (deviceInfo.guid) authParts.push('KUGOU_API_GUID=' + deviceInfo.guid);
-      if (deviceInfo.serverDev) authParts.push('KUGOU_API_DEV=' + deviceInfo.serverDev);
-      if (deviceInfo.mac) authParts.push('KUGOU_API_MAC=' + deviceInfo.mac);
-    }
-
-    var headers = {};
-    if (authParts.length > 0) {
-      headers['Authorization'] = authParts.join(';');
-    }
-
-    console.log('[xiaotoolkit] 获取每日推荐, auth:', authParts.length, '项');
-
-    var res = await ctx.electron.api.request({
-      method: 'GET',
-      url: '/everyday/recommend',
-      headers: headers,
-    });
-
-    console.log('[xiaotoolkit] API返回:', res.status, typeof res.body);
-
-    var body = res.body || res;
-    var rawList = extractDailySongs(body);
-
-    console.log('[xiaotoolkit] 解析到歌曲:', rawList ? rawList.length : 0, '首');
-
-    if (!rawList || rawList.length === 0) {
-      ctx.toast.danger('今日暂无推荐歌曲');
-      _dailyPlaying = false;
-      return;
-    }
-
-    var songs = rawList.map(mapDailySong);
-
-    await ctx.playlist.replaceAndPlay(songs, {
-      queueId: 'queue:daily-recommend',
-      title: '每日推荐',
-      subtitle: '为你量身定制',
-      type: 'daily-recommend',
-      dynamic: false,
-    });
-
-    ctx.toast.success('正在播放今日推荐 (' + songs.length + '首)');
-  } catch (err) {
-    console.error('[xiaotoolkit] 每日推荐播放失败:', err);
-    ctx.toast.danger('获取每日推荐失败');
-  }
-
-  _dailyPlaying = false;
-}
-
-async function playRankingTop() {
-  if (_dailyPlaying) return;
-  _dailyPlaying = true;
-
-  try {
-    var piniaState = ctx.pinia.state.value;
-    var userInfo = piniaState.user && piniaState.user.info;
-    var deviceInfo = piniaState.device && piniaState.device.info;
-    var authParts = [];
-    if (userInfo) {
-      if (userInfo.token) authParts.push('token=' + userInfo.token);
-      if (userInfo.userid) authParts.push('userid=' + userInfo.userid);
-      if (userInfo.t1) authParts.push('t1=' + userInfo.t1);
-    }
-    if (deviceInfo) {
-      if (deviceInfo.dfid) authParts.push('dfid=' + deviceInfo.dfid);
-      if (deviceInfo.mid) authParts.push('KUGOU_API_MID=' + deviceInfo.mid);
-      if (deviceInfo.uuid) authParts.push('uuid=' + deviceInfo.uuid);
-      if (deviceInfo.guid) authParts.push('KUGOU_API_GUID=' + deviceInfo.guid);
-      if (deviceInfo.serverDev) authParts.push('KUGOU_API_DEV=' + deviceInfo.serverDev);
-      if (deviceInfo.mac) authParts.push('KUGOU_API_MAC=' + deviceInfo.mac);
-    }
-    var headers = {};
-    if (authParts.length > 0) headers['Authorization'] = authParts.join(';');
-
-    console.log('[xiaotoolkit] 获取排行榜');
-
-    // 1. 取榜单列表
-    var topRes = await ctx.electron.api.request({
-      method: 'GET', url: '/rank/top', headers: headers,
-    });
-    var topBody = topRes.body || topRes;
-    var topData = topBody.data || topBody;
-    var rankList = topData.list || topData.info || topData.songlist || topData;
-    if (!Array.isArray(rankList)) {
-      // 备用：/rank/list
-      var listRes = await ctx.electron.api.request({
-        method: 'GET', url: '/rank/list', headers: headers,
-      });
-      var listBody = listRes.body || listRes;
-      var listData = listBody.data || listBody;
-      rankList = listData.list || listData.info || listData;
-    }
-    if (!Array.isArray(rankList) || rankList.length === 0) {
-      ctx.toast.danger('暂无排行榜');
-      _dailyPlaying = false;
-      return;
-    }
-
-    // 取第一个有有效 id 的榜单
-    var firstRank = null;
-    for (var i = 0; i < rankList.length; i++) {
-      var r = rankList[i];
-      var rid = r.id || r.rankid || r.rankId || r.specialid;
-      if (rid) { firstRank = { item: r, id: rid }; break; }
-    }
-    if (!firstRank) {
-      ctx.toast.danger('无可用排行榜');
-      _dailyPlaying = false;
-      return;
-    }
-
-    console.log('[xiaotoolkit] 榜单:', firstRank.item.name || '未命名', 'id:', firstRank.id);
-
-    // 2. 取榜单歌曲
-    var songsRes = await ctx.electron.api.request({
-      method: 'GET', url: '/rank/audio',
-      params: { rankid: firstRank.id, page: 1, pagesize: 100 },
-      headers: headers,
-    });
-    var songsBody = songsRes.body || songsRes;
-    var songsData = songsBody.data || songsBody;
-    var songList = songsData.list || songsData.info || songsData.songlist || songsData.songs || songsData;
-    if (!Array.isArray(songList) || songList.length === 0) {
-      ctx.toast.danger('排行榜暂无歌曲');
-      _dailyPlaying = false;
-      return;
-    }
-
-    console.log('[xiaotoolkit] 排行榜歌曲:', songList.length, '首');
-    var songs = songList.map(mapRankSong);
-
-    await ctx.playlist.replaceAndPlay(songs, {
-      queueId: 'queue:ranking:' + firstRank.id,
-      title: firstRank.item.name || '排行榜',
-      subtitle: '实时热门趋势',
-      type: 'ranking',
-      dynamic: false,
-    });
-
-    ctx.toast.success('正在播放「' + (firstRank.item.name || '排行榜') + '」(' + songs.length + '首)');
-  } catch (err) {
-    console.error('[xiaotoolkit] 排行榜播放失败:', err);
-    ctx.toast.danger('获取排行榜失败');
-  }
-
-  _dailyPlaying = false;
-}
-
-function startDailyPlay() {
-  if (_dailyDispose) return;
-  console.log('[xiaotoolkit] 首页一键播放已启动');
-
-  function onFeatureActionClick(e) {
-    // 拦截首页功能卡片的播放按钮 + 装饰图标区域
-    var trigger = e.target.closest('.feature-action, .feature-icon');
-    if (!trigger) return;
-
-    var card = trigger.closest('.home-feature-card');
-    if (!card) return;
-
-    var isDaily = card.querySelector('.feature-icon.gradient-primary');
-    var isRanking = card.querySelector('.feature-icon.gradient-secondary') && (card.querySelector('.feature-title') || {}).textContent === '排行榜';
-
-    if (!isDaily && !isRanking) return;
-
-    console.log('[xiaotoolkit] ' + (isDaily ? '每日推荐' : '排行榜') + '图标被点击，直接播放');
-    e.stopPropagation();
-    e.preventDefault();
-
-    if (isDaily) {
-      playDailyRecommend();
-    } else {
-      playRankingTop();
-    }
-  }
-
-  document.addEventListener('click', onFeatureActionClick, true);
-  _dailyDispose = function() {
-    document.removeEventListener('click', onFeatureActionClick, true);
-  };
-}
-
-function stopDailyPlay() {
-  if (_dailyDispose) { _dailyDispose(); _dailyDispose = null; }
-}
+// （已移至自用插件 ziyong）
+// 此功能已迁移到自用插件中，xiaotoolkit 不再包含
 
 // ================ 5. 歌词界面完全沉浸 ================
 
@@ -904,23 +501,6 @@ function stopLyricHide() {
   lhRemoveCSS();
   lhCleanup();
 }
-// ================== 6. 隐藏顶部听歌识曲按钮 ==================
-
-var hrStyle = null;
-
-function startHideRecognize() {
-  if (document.getElementById('zhs-hr-style')) return;
-  var s = document.createElement('style');
-  s.id = 'zhs-hr-style';
-  s.textContent = '.title-bar .nav-btn[title="听歌识曲"] { display: none !important; }';
-  document.head.appendChild(s);
-  hrStyle = s;
-}
-
-function stopHideRecognize() {
-  if (hrStyle) { hrStyle.remove(); hrStyle = null; }
-}
-
 // ================== 7. 歌词对齐切换 ==================
 
 var laStyle = null;
@@ -982,7 +562,345 @@ function stopLyricAlign() {
   laRemove();
 }
 
-// ================== 设置面板 ==================
+// ================== 9. 歌单自适应布局 ==================
+
+var dcTimer = null;
+var dcLastWidth = 0;
+var dcCSS_ID = 'zhs-dc-style';
+var DC_MIN_WIDTH = 320;
+
+function dcGetCols(w) {
+  if (w <= 0) return 1;
+  var c = Math.floor(w / DC_MIN_WIDTH);
+  return Math.max(2, Math.min(6, c));
+}
+
+function dcInjectCSS(cols) {
+  var el = document.getElementById(dcCSS_ID);
+  if (el) el.remove();
+
+  var pct = (100 / cols).toFixed(4) + '%';
+
+  var css = [
+    '.song-list-inner {',
+    '  height: auto !important;',
+    '  min-height: 100% !important;',
+    '}',
+    '.will-change-transform {',
+    '  display: flex !important;',
+    '  flex-wrap: wrap !important;',
+    '  align-content: flex-start !important;',
+    '}',
+    '.song-list-row {',
+    '  flex: 0 0 ' + pct + ' !important;',
+    '  max-width: ' + pct + ' !important;',
+    '  box-sizing: border-box !important;',
+    '  padding: 0 8px !important;',
+    '  margin: 0 !important;',
+    '}',
+    '.song-list-row-inner {',
+    '  grid-template-columns: 40px minmax(0, 1fr) !important;',
+    '}',
+    '.song-list-sticky .h-11.grid { display: none !important; }',
+    'button[title="详情及评论"] { display: none !important; }',
+    '.song-list-row-inner > .song-list-meta-link,',
+    '.song-list-row-inner > button,',
+    '.song-list-row-inner > .pl-2.text-\\[12px\\].opacity-60 { display: none !important; }',
+    '.song-card { flex: 1 !important; min-width: 0 !important; }',
+    '.song-content { flex: 1 !important; min-width: 0 !important; }',
+    '.song-actions {',
+    '  margin-left: auto !important; display: flex !important;',
+    '  align-items: center !important; gap: 4px !important;',
+    '  flex-shrink: 0 !important; padding-left: 8px !important;',
+    '}',
+    'button[title="播放 MV"] { order: 1 !important; }',
+    '.song-action-favorite { order: 2 !important; }',
+    'button[title="播放 MV"] {',
+    '  opacity: 0 !important; visibility: hidden !important;',
+    '  transition: opacity 0.15s, visibility 0.15s !important;',
+    '}',
+    '.song-list-row:hover button[title="播放 MV"] {',
+    '  opacity: 1 !important; visibility: visible !important;',
+    '}',
+    '.song-action-favorite, .song-action-favorite.is-active { opacity: 1 !important; }',
+    '.song-title-row { flex-wrap: nowrap !important; overflow: hidden !important; gap: 4px !important; }',
+    '.song-name, .song-title { white-space: nowrap !important; overflow: visible !important; text-overflow: clip !important; flex-shrink: 0 !important; }',
+    '.song-tag { flex-shrink: 0 !important; }',
+  ].join('\n');
+
+  var style = document.createElement('style');
+  style.id = dcCSS_ID;
+  style.textContent = css;
+  document.head.appendChild(style);
+}
+
+function dcInitSS() {
+  if (!window.__ss || typeof window.__ss !== 'object') {
+    window.__ss = { value: 0.1 };
+  } else if (window.__ss.value !== 0.1) {
+    window.__ss.value = 0.1;
+  }
+}
+
+function dcUpdateLayout(w) {
+  var cols = dcGetCols(w);
+  dcInjectCSS(cols);
+  dcInitSS();
+}
+
+function dcPollLayout() {
+  var container = document.querySelector('.song-list-container');
+  if (!container) return;
+  var w = container.clientWidth;
+  if (w > 0 && w !== dcLastWidth) {
+    dcLastWidth = w;
+    dcUpdateLayout(w);
+  }
+}
+
+function startPlaylistLayout() {
+  if (dcTimer) return;
+  dcTimer = setInterval(dcPollLayout, 300);
+  // 立即执行一次
+  dcPollLayout();
+}
+
+function stopPlaylistLayout() {
+  if (dcTimer) { clearInterval(dcTimer); dcTimer = null; }
+  dcLastWidth = 0;
+  var el = document.getElementById(dcCSS_ID);
+  if (el) el.remove();
+  if (window.__ss && typeof window.__ss === 'object' && 'value' in window.__ss) {
+    window.__ss.value = 60;
+  }
+}
+
+// ================== 10. 搜索历史 ==================
+
+var _shInputSelectors = ['.search-input', '.tb-search-input'];
+var _shOverlayWidth = 280;
+var _shOverlays = {};
+var _shInputs = {};
+var _shHandlers = {};
+var _shRepositionHandlers = {};
+var _shHideTimers = {};
+var _shPollTimer = null;
+var _shBodyObserver = null;
+
+function _shCancelHide(id) {
+  if (id != null && _shHideTimers[id]) { clearTimeout(_shHideTimers[id]); delete _shHideTimers[id]; }
+}
+function _shCancelAllHide() { for (var k in _shHideTimers) _shCancelHide(k); }
+function _shScheduleHide(id, delay) {
+  _shCancelHide(id);
+  _shHideTimers[id] = setTimeout(function(){ _shHideDropdown(id); delete _shHideTimers[id]; }, delay);
+}
+function _shInputAlive(id) { return _shInputs[id] && _shInputs[id].isConnected; }
+
+function _shMakeOverlay(history) {
+  var o = document.createElement('div');
+  o.className = 'search-history-overlay';
+  o.style.cssText = 'z-index:999999;box-sizing:border-box;background:color-mix(in srgb,var(--bg-main,#f0f0f0)75%,transparent);border:1px solid var(--border-subtle,rgba(128,128,128,0.15));border-radius:14px;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);padding:6px 8px;font-size:14px;color:var(--color-text-main,#333);pointer-events:auto;box-shadow:0 4px 24px rgba(0,0,0,0.1);';
+  o.addEventListener('mouseenter', function(){
+    for (var k in _shOverlays) { if (_shOverlays[k] === o) { _shCancelHide(k); break; } }
+  });
+  o.addEventListener('mouseleave', function(){
+    for (var k in _shOverlays) { if (_shOverlays[k] === o) { _shScheduleHide(k, 300); break; } }
+  });
+  o.addEventListener('pointerdown', function(e){ e.preventDefault(); });
+
+  var h = document.createElement('div');
+  h.style.cssText = 'padding:0 0 4px 0;font-size:12px;opacity:0.5;font-weight:600;display:flex;align-items:center;pointer-events:auto;';
+  var hLabel = document.createElement('span');
+  hLabel.textContent = '历史搜索';
+  var hClear = document.createElement('span');
+  hClear.textContent = '清空';
+  hClear.style.cssText = 'margin-left:auto;cursor:pointer;opacity:0.6;font-weight:400;font-size:11px;padding:2px 6px;border-radius:4px;';
+  hClear.addEventListener('mouseenter', function(){ hClear.style.opacity='1'; hClear.style.background='var(--surface-elevated,color-mix(in srgb,var(--color-text-main)10%,transparent))'; });
+  hClear.addEventListener('mouseleave', function(){ hClear.style.opacity='0.6'; hClear.style.background=''; });
+  hClear.addEventListener('click', function(e){
+    e.stopPropagation();
+    if (ctx && ctx.stores && ctx.stores.settings) { ctx.stores.settings.clearSearchHistory(); _shHideAll(); }
+  });
+  h.appendChild(hLabel); h.appendChild(hClear); o.appendChild(h);
+
+  var maxItems = Math.min(history.length, 9);
+  var wrap = document.createElement('div');
+  wrap.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:5px;pointer-events:auto;';
+  for (var i = 0; i < maxItems; i++) {
+    var kw = history[i];
+    var chip = document.createElement('span');
+    chip.style.cssText = 'display:inline-flex;align-items:center;position:relative;padding:3px 8px;border-radius:14px;cursor:pointer;font-size:12px;line-height:1.5;color:color-mix(in srgb,var(--color-primary,#07c) 80%,var(--color-text-main,#333) 20%);background:color-mix(in srgb,var(--color-text-main)8%,transparent);transition:background 0.12s;user-select:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;';
+    chip.innerHTML = '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">' + kw.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</span><span class="__del" style="flex-shrink:0;margin-left:4px;display:none;width:14px;height:14px;line-height:14px;text-align:center;border-radius:50%;font-size:11px;cursor:pointer;opacity:0.6" title="删除">×</span>';
+    var delBtn = chip.querySelector('.__del');
+    chip.addEventListener('mouseenter', function(){ chip.style.background='color-mix(in srgb,var(--color-text-main)14%,transparent)'; if(delBtn)delBtn.style.display='inline-block'; });
+    chip.addEventListener('mouseleave', function(){ chip.style.background='color-mix(in srgb,var(--color-text-main)8%,transparent)'; if(delBtn)delBtn.style.display='none'; });
+    delBtn.addEventListener('click', function(e){
+      e.stopPropagation();
+      if (ctx && ctx.stores && ctx.stores.settings) {
+        ctx.stores.settings.removeFromSearchHistory(kw);
+        chip.remove();
+        if (wrap.children.length === 0) { for (var k in _shOverlays) { if (_shOverlays[k] === o) { _shHideDropdown(k); break; } } }
+      }
+    });
+    (function(keyword){
+      chip.addEventListener('click', function(){
+        var inputEl = null, inputId = null;
+        for (var k in _shOverlays) { if (_shOverlays[k] && _shOverlays[k].isConnected) { inputEl = _shInputs[k]; inputId = k; break; } }
+        if (!inputEl) return;
+        _shHideAll();
+        var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        nativeSetter.call(inputEl, keyword);
+        inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+        setTimeout(function(){ inputEl.dispatchEvent(new KeyboardEvent('keydown', { key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true, cancelable:true })); }, 80);
+      });
+    })(kw);
+    wrap.appendChild(chip);
+  }
+  o.appendChild(wrap);
+  return o;
+}
+
+function _shMakeHandler(id) {
+  if (_shHandlers[id]) return _shHandlers[id];
+  _shHandlers[id] = {
+    mouseenter: function(){
+      _shCancelHide(id);
+      _shInputs[id] = this;
+      if (!this.value.trim()) { setTimeout(function(){ _shShowForInput(id, _shInputs[id]); }, 16); }
+    },
+    mouseleave: function(){ _shScheduleHide(id, 400); },
+    focus: function(){ _shCancelHide(id); _shInputs[id] = this; },
+    blur: function(){ _shScheduleHide(id, 250); },
+    input: function(){
+      _shInputs[id] = this;
+      if (this.value.trim()) { _shHideDropdown(id); } else { _shShowForInput(id, this); }
+    }
+  };
+  return _shHandlers[id];
+}
+
+function _shAttachToInput(id, el) {
+  if (_shInputs[id] === el && _shInputAlive(id)) return;
+  if (_shInputs[id] && _shInputs[id] !== el && _shHandlers[id]) {
+    var h = _shHandlers[id];
+    _shInputs[id].removeEventListener('mouseenter', h.mouseenter);
+    _shInputs[id].removeEventListener('mouseleave', h.mouseleave);
+    _shInputs[id].removeEventListener('focus', h.focus);
+    _shInputs[id].removeEventListener('blur', h.blur);
+    _shInputs[id].removeEventListener('input', h.input);
+  }
+  _shInputs[id] = el;
+  var h = _shMakeHandler(id);
+  el.addEventListener('mouseenter', h.mouseenter);
+  el.addEventListener('mouseleave', h.mouseleave);
+  el.addEventListener('focus', h.focus);
+  el.addEventListener('blur', h.blur);
+  el.addEventListener('input', h.input);
+}
+
+function _shShowForInput(id, inputEl) {
+  if (!ctx || !ctx.stores || !ctx.stores.settings || !inputEl) return;
+  if (_shOverlays[id] && _shOverlays[id].isConnected) return;
+  var history = ctx.stores.settings.searchHistory || [];
+  if (!history || history.length === 0) return;
+  var isGlobal = id && id.indexOf('.tb-search-input') === 0;
+  var parent = isGlobal ? (document.querySelector('.tb-search') || inputEl.offsetParent || document.body) : (inputEl.offsetParent || document.body);
+  var overlay = _shMakeOverlay(history);
+  overlay.style.position = 'absolute'; overlay.style.boxSizing = 'border-box';
+  if (isGlobal) {
+    var tbSearch = document.querySelector('.tb-search');
+    if (tbSearch) {
+      var inpRect = inputEl.getBoundingClientRect();
+      var contRect = tbSearch.getBoundingClientRect();
+      overlay.style.left = (inpRect.left - contRect.left) + 'px';
+      overlay.style.top = (inpRect.bottom - contRect.top + 4) + 'px';
+    } else { overlay.style.left = '0'; overlay.style.top = 'calc(100% + 6px)'; }
+    overlay.style.width = Math.max(inputEl.offsetWidth, _shOverlayWidth) + 'px';
+  } else {
+    overlay.style.left = inputEl.offsetLeft + 'px';
+    overlay.style.top = (inputEl.offsetTop + inputEl.offsetHeight + 4) + 'px';
+    overlay.style.width = Math.max(inputEl.offsetWidth, _shOverlayWidth) + 'px';
+  }
+  parent.appendChild(overlay);
+  _shOverlays[id] = overlay;
+  var reposition = function(){
+    if (!_shOverlays[id] || !_shOverlays[id].isConnected || !_shInputs[id] || !_shInputs[id].isConnected) return;
+    try {
+      if (isGlobal) {
+        var tb2 = document.querySelector('.tb-search');
+        if (tb2 && _shInputs[id]) {
+          var ir = _shInputs[id].getBoundingClientRect();
+          var cr = tb2.getBoundingClientRect();
+          _shOverlays[id].style.left = (ir.left - cr.left) + 'px';
+          _shOverlays[id].style.top = (ir.bottom - cr.top + 4) + 'px';
+        }
+        return;
+      }
+      var inp = _shInputs[id];
+      var pr = inp.offsetParent || document.body;
+      if (_shOverlays[id].parentElement !== pr) pr.appendChild(_shOverlays[id]);
+      _shOverlays[id].style.left = inp.offsetLeft + 'px';
+      _shOverlays[id].style.top = (inp.offsetTop + inp.offsetHeight + 4) + 'px';
+      _shOverlays[id].style.width = Math.max(inp.offsetWidth, _shOverlayWidth) + 'px';
+    } catch(e){}
+  };
+  _shRepositionHandlers[id] = reposition;
+  window.addEventListener('scroll', reposition, { passive: true, capture: true });
+  window.addEventListener('resize', reposition, { passive: true });
+}
+
+function _shHideDropdown(id) {
+  _shCancelHide(id);
+  if (_shOverlays[id]) {
+    if (_shRepositionHandlers[id]) {
+      window.removeEventListener('scroll', _shRepositionHandlers[id], true);
+      window.removeEventListener('resize', _shRepositionHandlers[id]);
+      delete _shRepositionHandlers[id];
+    }
+    try { _shOverlays[id].remove(); } catch(e) {}
+    delete _shOverlays[id];
+  }
+}
+
+function _shHideAll() { for (var k in _shOverlays) _shHideDropdown(k); }
+
+function _shFindInputs() {
+  for (var i = 0; i < _shInputSelectors.length; i++) {
+    var sel = _shInputSelectors[i];
+    var els = document.querySelectorAll(sel);
+    for (var j = 0; j < els.length; j++) {
+      var key = sel + '-' + j;
+      if (!_shInputs[key] || !_shInputAlive(key)) _shAttachToInput(key, els[j]);
+    }
+  }
+}
+
+function startSearchHistory() {
+  _shFindInputs();
+  if (_shPollTimer) clearInterval(_shPollTimer);
+  _shPollTimer = setInterval(_shFindInputs, 3000);
+  if (_shBodyObserver) _shBodyObserver.disconnect();
+  _shBodyObserver = new MutationObserver(function(){ _shFindInputs(); });
+  _shBodyObserver.observe(document.body || document.documentElement, { childList: true, subtree: true });
+}
+
+function stopSearchHistory() {
+  _shCancelAllHide();
+  _shHideAll();
+  if (_shPollTimer) { clearInterval(_shPollTimer); _shPollTimer = null; }
+  if (_shBodyObserver) { _shBodyObserver.disconnect(); _shBodyObserver = null; }
+  for (var k in _shHandlers) {
+    if (_shInputs[k]) {
+      _shInputs[k].removeEventListener('mouseenter', _shHandlers[k].mouseenter);
+      _shInputs[k].removeEventListener('mouseleave', _shHandlers[k].mouseleave);
+      _shInputs[k].removeEventListener('focus', _shHandlers[k].focus);
+      _shInputs[k].removeEventListener('blur', _shHandlers[k].blur);
+      _shInputs[k].removeEventListener('input', _shHandlers[k].input);
+    }
+  }
+  _shInputs = {}; _shHandlers = {}; _shOverlays = {}; _shRepositionHandlers = {}; _shHideTimers = {};
+}
 
 var featureState = {};
 
@@ -990,24 +908,24 @@ async function loadFeatureState() {
   var saved = await ctx.storage.get('zhs-features');
   if (saved) {
     // 兼容旧版本，新功能默认启用
-    if (saved.dailyPlay === undefined) saved.dailyPlay = true;
     if (saved.clickToPlay === undefined) saved.clickToPlay = true;
     if (saved.lyricAlign === undefined) saved.lyricAlign = 'center';
     if (saved.lyricSpacing === undefined) saved.lyricSpacing = 0;
+    if (saved.duoColumn === undefined) saved.duoColumn = true;
+    if (saved.searchHistory === undefined) saved.searchHistory = true;
     featureState = saved;
   } else {
     featureState = {
       artistSort: true,
-      hidePlaylist: true,
       clickToPlay: true,
-      dailyPlay: true,
       lyricHide: true,
-      hideRecognize: false,
       pluginBtn: true,
       effect: false,
       effectMode: 'snow',
       lyricAlign: 'center',
       lyricSpacing: 0,
+      duoColumn: true,
+      searchHistory: true,
     };
   }
 }
@@ -1024,12 +942,11 @@ export async function activate(_ctx) {
   await loadFeatureState();
 
   if (featureState.artistSort) startArtistSort();
-  if (featureState.hidePlaylist) startHidePlaylist();
   if (featureState.clickToPlay) startClickToPlay();
-  if (featureState.dailyPlay) startDailyPlay();
   if (featureState.lyricHide) startLyricHide();
-  if (featureState.hideRecognize) startHideRecognize();
   if (featureState.pluginBtn) startPluginBtn();
+  if (featureState.duoColumn) startPlaylistLayout();
+  if (featureState.searchHistory) startSearchHistory();
   if (featureState.effect) startEffect(featureState.effectMode || 'snow');
   startLyricAlign(featureState.lyricAlign || 'center');
 
@@ -1041,27 +958,17 @@ export async function activate(_ctx) {
       var state = ctx.vue.reactive({
         features: [
           { id: 'artistSort', icon: '🔥', label: '歌手热门排序', desc: '歌手详情页默认按热门排序', enabled: featureState.artistSort },
-          { id: 'hidePlaylist', icon: '📋', label: '收藏歌单自动切换', desc: '启动时自动切换到收藏歌单', enabled: featureState.hidePlaylist },
           { id: 'clickToPlay', icon: '👆', label: '单击播放', desc: '单击歌曲任意位置即可播放', enabled: featureState.clickToPlay },
-          { id: 'dailyPlay', icon: '🎵', label: '首页卡片一键播放', desc: '每日推荐/排行榜卡片上直接播放，不跳转', enabled: featureState.dailyPlay },
           { id: 'lyricHide', icon: '🙈', label: '歌词界面完全沉浸', desc: '控制栏和工具栏自动隐藏', enabled: featureState.lyricHide },
-          { id: 'hideRecognize', icon: '🚫', label: '隐藏听歌识曲', desc: '隐藏顶部导航栏的听歌识曲按钮', enabled: featureState.hideRecognize },
           { id: 'pluginBtn', icon: '🔧', label: '顶部插件管理入口', desc: '搜索框右侧添加插件快捷按钮', enabled: featureState.pluginBtn },
-          { id: 'effect', icon: '🎆', label: '桌面特效', desc: '10种粒子特效', enabled: featureState.effect },
+          { id: 'duoColumn', icon: '📐', label: '歌单自适应布局', desc: '歌单多列网格，自适应列数', enabled: featureState.duoColumn },
+          { id: 'searchHistory', icon: '🕐', label: '搜索历史', desc: '搜索框显示历史搜索记录', enabled: featureState.searchHistory },
         ],
       });
       var currentEffectMode = ctx.vue.ref(featureState.effectMode || 'snow');
+      var effectActive = ctx.vue.ref(!!featureState.effect);
       var currentAlign = ctx.vue.ref(featureState.lyricAlign || 'center');
       var currentSpacing = ctx.vue.ref(featureState.lyricSpacing || 0);
-
-      function switchEffectMode(mode) {
-        currentEffectMode.value = mode;
-        featureState.effectMode = mode;
-        featureState.effect = true;
-        state.features[6].enabled = true;
-        saveFeatureState();
-        startEffect(mode);
-      }
 
       ctx.vue.watch(function() {
         return state.features.map(function(f) { return f.enabled; });
@@ -1070,13 +977,11 @@ export async function activate(_ctx) {
         saveFeatureState();
         state.features.forEach(function(f) {
           if (f.id === 'artistSort') { f.enabled ? startArtistSort() : stopArtistSort(); }
-          else if (f.id === 'hidePlaylist') { f.enabled ? startHidePlaylist() : stopHidePlaylist(); }
           else if (f.id === 'clickToPlay') { f.enabled ? startClickToPlay() : stopClickToPlay(); }
-          else if (f.id === 'dailyPlay') { f.enabled ? startDailyPlay() : stopDailyPlay(); }
           else if (f.id === 'lyricHide') { f.enabled ? startLyricHide() : stopLyricHide(); }
-          else if (f.id === 'hideRecognize') { f.enabled ? startHideRecognize() : stopHideRecognize(); }
           else if (f.id === 'pluginBtn') { f.enabled ? startPluginBtn() : stopPluginBtn(); }
-          else if (f.id === 'effect') { f.enabled ? startEffect(currentEffectMode.value) : stopEffect(); }
+          else if (f.id === 'duoColumn') { f.enabled ? startPlaylistLayout() : stopPlaylistLayout(); }
+          else if (f.id === 'searchHistory') { f.enabled ? startSearchHistory() : stopSearchHistory(); }
         });
       }, { deep: true });
 
@@ -1194,15 +1099,27 @@ export async function activate(_ctx) {
           },
             effectHotkeys.map(function(item) {
               var key = item.mode;
-              var active = currentEffectMode.value === key;
+              var active = effectActive.value && currentEffectMode.value === key;
               return h('div', {
                 key: key,
                 style: { display: 'flex', 'align-items': 'center', gap: '2px', cursor: 'pointer', padding: '2px 6px', 'border-radius': '5px', background: active ? 'var(--hover-bg, rgba(128,128,128,0.1))' : 'transparent', 'font-size': '11px', color: active ? 'var(--color-primary, #4caf50)' : 'var(--color-text-secondary)', border: active ? '1px solid var(--color-primary, #4caf50)' : '1px solid transparent' },
                 onClick: function() {
-                  currentEffectMode.value = key;
-                  featureState.effectMode = key;
-                  saveFeatureState();
-                  if (featureState.effect) { stopEffect(); startEffect(key); }
+                  if (featureState.effect && currentEffectMode.value === key) {
+                    // 再次点击同一图标 → 取消特效，界面即时更新
+                    effectActive.value = false;
+                    featureState.effect = false;
+                    saveFeatureState();
+                    stopEffect();
+                  } else {
+                    // 点击不同图标或特效关闭时 → 切换/启用
+                    currentEffectMode.value = key;
+                    effectActive.value = true;
+                    featureState.effect = true;
+                    featureState.effectMode = key;
+                    saveFeatureState();
+                    stopEffect();
+                    startEffect(key);
+                  }
                 },
               }, [
                 h('span', {}, item.icon),
@@ -1215,9 +1132,7 @@ export async function activate(_ctx) {
     },
   });
 
-  ctx.css.inject([
-    '.zhs-icon { width:18px; height:18px; flex-shrink:0; color:var(--color-text-secondary); }',
-  ].join(''));
+  // （歌曲列表简洁模式已移至「歌单布局」插件）
 
   disposeSettings = ctx.ui.settings.define({
     id: 'xiaotoolkit',
@@ -1229,12 +1144,11 @@ export async function activate(_ctx) {
 
 export function deactivate() {
   stopArtistSort();
-  stopHidePlaylist();
   stopClickToPlay();
-  stopDailyPlay();
   stopLyricHide();
-  stopHideRecognize();
   stopPluginBtn();
+  stopPlaylistLayout();
+  stopSearchHistory();
   stopEffect();
   stopLyricAlign();
 
