@@ -1,4 +1,4 @@
-// ===== 小功能 =====
+﻿// ===== 小功能 =====
 // Author: 张三
 // 小功能：热门排序 + 收藏歌单自动切换 + 单击播放 + 歌词界面完全沉浸 + 隐藏听歌识曲 + 顶部插件按钮 + 10种桌面特效 + 歌单自适应布局 + 搜索历史
 // 注意：右键下载已独立为单独插件，如需使用请安装 right-click-download
@@ -579,54 +579,50 @@ function dcInjectCSS(cols) {
   var el = document.getElementById(dcCSS_ID);
   if (el) el.remove();
 
-  var pct = (100 / cols).toFixed(4) + '%';
-
   var css = [
-    '.song-list-inner {',
-    '  height: auto !important;',
-    '  min-height: 100% !important;',
-    '}',
     '.will-change-transform {',
-    '  display: flex !important;',
-    '  flex-wrap: wrap !important;',
-    '  align-content: flex-start !important;',
+    '  display: grid !important;',
+    '  grid-template-columns: repeat(' + cols + ', 1fr) !important;',
+    '  gap: 0 !important;',
+    '  align-content: start !important;',
     '}',
     '.song-list-row {',
-    '  flex: 0 0 ' + pct + ' !important;',
-    '  max-width: ' + pct + ' !important;',
-    '  box-sizing: border-box !important;',
-    '  padding: 0 8px !important;',
+    '  height: 60px !important;',
     '  margin: 0 !important;',
+    '  padding: 0 6px !important;',
+    '  box-sizing: border-box !important;',
+    '  max-width: 100% !important;',
+    '  flex: none !important;',
     '}',
     '.song-list-row-inner {',
-    '  grid-template-columns: 40px minmax(0, 1fr) !important;',
+    '  grid-template-columns: 32px minmax(0, 1fr) !important;',
+    '  gap: 4px !important;',
     '}',
-    '.song-list-sticky .h-11.grid { display: none !important; }',
-    'button[title="详情及评论"] { display: none !important; }',
+    '.song-list-sticky .h-11.grid,',
+    'button[title="\u8be6\u60c5\u53ca\u8bc4\u8bba"] { display: none !important; }',
     '.song-list-row-inner > .song-list-meta-link,',
-    '.song-list-row-inner > button,',
+    '.song-list-row-inner > button:not([title="\u64ad\u653e MV"]):not(.song-action-favorite),',
     '.song-list-row-inner > .pl-2.text-\\[12px\\].opacity-60 { display: none !important; }',
-    '.song-card { flex: 1 !important; min-width: 0 !important; }',
-    '.song-content { flex: 1 !important; min-width: 0 !important; }',
+    '.song-card, .song-content { flex: 1 !important; min-width: 0 !important; }',
     '.song-actions {',
     '  margin-left: auto !important; display: flex !important;',
-    '  align-items: center !important; gap: 4px !important;',
-    '  flex-shrink: 0 !important; padding-left: 8px !important;',
+    '  align-items: center !important; gap: 2px !important;',
+    '  flex-shrink: 0 !important;',
     '}',
-    'button[title="播放 MV"] { order: 1 !important; }',
-    '.song-action-favorite { order: 2 !important; }',
-    'button[title="播放 MV"] {',
+    'button[title="\u64ad\u653e MV"] {',
     '  opacity: 0 !important; visibility: hidden !important;',
     '  transition: opacity 0.15s, visibility 0.15s !important;',
     '}',
-    '.song-list-row:hover button[title="播放 MV"] {',
+    '.song-list-row:hover button[title="\u64ad\u653e MV"] {',
     '  opacity: 1 !important; visibility: visible !important;',
     '}',
     '.song-action-favorite, .song-action-favorite.is-active { opacity: 1 !important; }',
-    '.song-title-row { flex-wrap: nowrap !important; overflow: hidden !important; gap: 4px !important; }',
-    '.song-name, .song-title { white-space: nowrap !important; overflow: visible !important; text-overflow: clip !important; flex-shrink: 0 !important; }',
-    '.song-tag { flex-shrink: 0 !important; }',
-  ].join('\n');
+    '.song-title-row { flex-wrap: nowrap !important; overflow: hidden !important; gap: 2px !important; }',
+    '.song-name, .song-title {',
+    '  white-space: nowrap !important; overflow: hidden !important;',
+    '  text-overflow: ellipsis !important;'
+    '}',
+  ].join('\\n');
 
   var style = document.createElement('style');
   style.id = dcCSS_ID;
@@ -634,18 +630,21 @@ function dcInjectCSS(cols) {
   document.head.appendChild(style);
 }
 
-function dcInitSS() {
+function dcInitSS(cols) {
+  var fakeH = 60 / cols;
   if (!window.__ss || typeof window.__ss !== 'object') {
-    window.__ss = { value: 0.1 };
-  } else if (window.__ss.value !== 0.1) {
-    window.__ss.value = 0.1;
+    window.__ss = { value: fakeH };
+  } else {
+    window.__ss.value = fakeH;
   }
 }
 
 function dcUpdateLayout(w) {
   var cols = dcGetCols(w);
   dcInjectCSS(cols);
-  dcInitSS();
+  dcInitSS(cols);
+  // 通知虚拟列表重新计算
+  window.dispatchEvent(new Event('scroll'));
 }
 
 function dcPollLayout() {
@@ -673,6 +672,8 @@ function stopPlaylistLayout() {
   if (window.__ss && typeof window.__ss === 'object' && 'value' in window.__ss) {
     window.__ss.value = 60;
   }
+  // 通知虚拟列表恢复单列模式
+  window.dispatchEvent(new Event('scroll'));
 }
 
 // ================== 10. 搜索历史 ==================
