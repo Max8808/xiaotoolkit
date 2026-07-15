@@ -1,6 +1,6 @@
-﻿// ===== 小功能 =====
+// ===== 小功能 v1.4.3 =====
 // Author: 张三
-// 小功能：热门排序 + 收藏歌单自动切换 + 单击播放 + 歌词界面完全沉浸 + 隐藏听歌识曲 + 顶部插件按钮 + 10种桌面特效 + 歌单自适应布局 + 搜索历史
+// 小功能：热门排序 + 收藏歌单自动切换 + 单击播放 + 歌词界面完全沉浸 + 每日福利 + 顶部插件按钮 + 10种桌面特效 + 歌单多列布局(v2) + 搜索历史
 // 注意：右键下载已独立为单独插件，如需使用请安装 right-click-download
 // 在插件设置面板中可独立开关每个功能
 
@@ -389,17 +389,31 @@ function skipClick(el) {
 function startClickToPlay() {
   if (_clickDispose) return;
   function onRowClick(e) {
+    // 情况1: 歌单列表行
     var row = e.target.closest('[data-song-row]');
-    if (!row) return;
+    if (row) {
+      if (skipClick(e.target)) return;
+      var firstCol = row.querySelector('.song-list-row-inner > div:first-child');
+      if (!firstCol) return;
+      var playBtn = firstCol.querySelector('.cursor-pointer');
+      if (!playBtn) return;
+      playBtn.dispatchEvent(new MouseEvent('click', {
+        bubbles: true, cancelable: true,
+        clientX: e.clientX, clientY: e.clientY,
+      }));
+      return;
+    }
+    // 情况2: 播放队列行
+    var queueRow = e.target.closest('[data-queue-row]');
+    if (!queueRow) return;
     if (skipClick(e.target)) return;
-    var firstCol = row.querySelector('.song-list-row-inner > div:first-child');
-    if (!firstCol) return;
-    var playBtn = firstCol.querySelector('.cursor-pointer');
-    if (!playBtn) return;
-    playBtn.dispatchEvent(new MouseEvent('click', {
-      bubbles: true, cancelable: true,
-      clientX: e.clientX, clientY: e.clientY,
-    }));
+    var queueBtn = queueRow.querySelector('.queue-play, .cursor-pointer, button');
+    if (queueBtn) {
+      queueBtn.dispatchEvent(new MouseEvent('click', {
+        bubbles: true, cancelable: true,
+        clientX: e.clientX, clientY: e.clientY,
+      }));
+    }
   }
   document.addEventListener('click', onRowClick, true);
   _clickDispose = function() { document.removeEventListener('click', onRowClick, true); };
@@ -408,10 +422,6 @@ function startClickToPlay() {
 function stopClickToPlay() {
   if (_clickDispose) { _clickDispose(); _clickDispose = null; }
 }
-
-// ================ 4. 首页卡片一键播放 ================
-// （已移至自用插件 ziyong）
-// 此功能已迁移到自用插件中，xiaotoolkit 不再包含
 
 // ================ 5. 歌词界面完全沉浸 ================
 
@@ -560,120 +570,6 @@ function startLyricAlign(align) {
 function stopLyricAlign() {
   if (laTimer) { clearInterval(laTimer); laTimer = null; }
   laRemove();
-}
-
-// ================== 9. 歌单自适应布局 ==================
-
-var dcTimer = null;
-var dcLastWidth = 0;
-var dcCSS_ID = 'zhs-dc-style';
-var DC_MIN_WIDTH = 320;
-
-function dcGetCols(w) {
-  if (w <= 0) return 1;
-  var c = Math.floor(w / DC_MIN_WIDTH);
-  return Math.max(2, Math.min(6, c));
-}
-
-function dcInjectCSS(cols) {
-  var el = document.getElementById(dcCSS_ID);
-  if (el) el.remove();
-
-  var css = [
-    '.will-change-transform {',
-    '  display: grid !important;',
-    '  grid-template-columns: repeat(' + cols + ', 1fr) !important;',
-    '  gap: 0 !important;',
-    '  align-content: start !important;',
-    '}',
-    '.song-list-row {',
-    '  height: 60px !important;',
-    '  margin: 0 !important;',
-    '  padding: 0 6px !important;',
-    '  box-sizing: border-box !important;',
-    '  max-width: 100% !important;',
-    '  flex: none !important;',
-    '}',
-    '.song-list-row-inner {',
-    '  grid-template-columns: 32px minmax(0, 1fr) !important;',
-    '  gap: 4px !important;',
-    '}',
-    '.song-list-sticky .h-11.grid,',
-    'button[title="\u8be6\u60c5\u53ca\u8bc4\u8bba"] { display: none !important; }',
-    '.song-list-row-inner > .song-list-meta-link,',
-    '.song-list-row-inner > button:not([title="\u64ad\u653e MV"]):not(.song-action-favorite),',
-    '.song-list-row-inner > .pl-2.text-\\[12px\\].opacity-60 { display: none !important; }',
-    '.song-card, .song-content { flex: 1 !important; min-width: 0 !important; }',
-    '.song-actions {',
-    '  margin-left: auto !important; display: flex !important;',
-    '  align-items: center !important; gap: 2px !important;',
-    '  flex-shrink: 0 !important;',
-    '}',
-    'button[title="\u64ad\u653e MV"] {',
-    '  opacity: 0 !important; visibility: hidden !important;',
-    '  transition: opacity 0.15s, visibility 0.15s !important;',
-    '}',
-    '.song-list-row:hover button[title="\u64ad\u653e MV"] {',
-    '  opacity: 1 !important; visibility: visible !important;',
-    '}',
-    '.song-action-favorite, .song-action-favorite.is-active { opacity: 1 !important; }',
-    '.song-title-row { flex-wrap: nowrap !important; overflow: hidden !important; gap: 2px !important; }',
-    '.song-name, .song-title {',
-    '  white-space: nowrap !important; overflow: hidden !important;',
-    '  text-overflow: ellipsis !important;'
-    '}',
-  ].join('\\n');
-
-  var style = document.createElement('style');
-  style.id = dcCSS_ID;
-  style.textContent = css;
-  document.head.appendChild(style);
-}
-
-function dcInitSS(cols) {
-  var fakeH = 60 / cols;
-  if (!window.__ss || typeof window.__ss !== 'object') {
-    window.__ss = { value: fakeH };
-  } else {
-    window.__ss.value = fakeH;
-  }
-}
-
-function dcUpdateLayout(w) {
-  var cols = dcGetCols(w);
-  dcInjectCSS(cols);
-  dcInitSS(cols);
-  // 通知虚拟列表重新计算
-  window.dispatchEvent(new Event('scroll'));
-}
-
-function dcPollLayout() {
-  var container = document.querySelector('.song-list-container');
-  if (!container) return;
-  var w = container.clientWidth;
-  if (w > 0 && w !== dcLastWidth) {
-    dcLastWidth = w;
-    dcUpdateLayout(w);
-  }
-}
-
-function startPlaylistLayout() {
-  if (dcTimer) return;
-  dcTimer = setInterval(dcPollLayout, 300);
-  // 立即执行一次
-  dcPollLayout();
-}
-
-function stopPlaylistLayout() {
-  if (dcTimer) { clearInterval(dcTimer); dcTimer = null; }
-  dcLastWidth = 0;
-  var el = document.getElementById(dcCSS_ID);
-  if (el) el.remove();
-  if (window.__ss && typeof window.__ss === 'object' && 'value' in window.__ss) {
-    window.__ss.value = 60;
-  }
-  // 通知虚拟列表恢复单列模式
-  window.dispatchEvent(new Event('scroll'));
 }
 
 // ================== 10. 搜索历史 ==================
@@ -912,7 +808,6 @@ async function loadFeatureState() {
     if (saved.clickToPlay === undefined) saved.clickToPlay = true;
     if (saved.lyricAlign === undefined) saved.lyricAlign = 'center';
     if (saved.lyricSpacing === undefined) saved.lyricSpacing = 0;
-    if (saved.duoColumn === undefined) saved.duoColumn = true;
     if (saved.searchHistory === undefined) saved.searchHistory = true;
     featureState = saved;
   } else {
@@ -925,8 +820,8 @@ async function loadFeatureState() {
       effectMode: 'snow',
       lyricAlign: 'center',
       lyricSpacing: 0,
-      duoColumn: true,
       searchHistory: true,
+      dailySign: true,
     };
   }
 }
@@ -946,8 +841,8 @@ export async function activate(_ctx) {
   if (featureState.clickToPlay) startClickToPlay();
   if (featureState.lyricHide) startLyricHide();
   if (featureState.pluginBtn) startPluginBtn();
-  if (featureState.duoColumn) startPlaylistLayout();
   if (featureState.searchHistory) startSearchHistory();
+  if (featureState.dailySign !== false) startSignTimer();
   if (featureState.effect) startEffect(featureState.effectMode || 'snow');
   startLyricAlign(featureState.lyricAlign || 'center');
 
@@ -962,8 +857,8 @@ export async function activate(_ctx) {
           { id: 'clickToPlay', icon: '👆', label: '单击播放', desc: '单击歌曲任意位置即可播放', enabled: featureState.clickToPlay },
           { id: 'lyricHide', icon: '🙈', label: '歌词界面完全沉浸', desc: '控制栏和工具栏自动隐藏', enabled: featureState.lyricHide },
           { id: 'pluginBtn', icon: '🔧', label: '顶部插件管理入口', desc: '搜索框右侧添加插件快捷按钮', enabled: featureState.pluginBtn },
-          { id: 'duoColumn', icon: '📐', label: '歌单自适应布局', desc: '歌单多列网格，自适应列数', enabled: featureState.duoColumn },
           { id: 'searchHistory', icon: '🕐', label: '搜索历史', desc: '搜索框显示历史搜索记录', enabled: featureState.searchHistory },
+          { id: 'dailySign', icon: '🎁', label: '每日福利', desc: '每日定时领取平台成长值', enabled: featureState.dailySign !== false },
         ],
       });
       var currentEffectMode = ctx.vue.ref(featureState.effectMode || 'snow');
@@ -981,8 +876,8 @@ export async function activate(_ctx) {
           else if (f.id === 'clickToPlay') { f.enabled ? startClickToPlay() : stopClickToPlay(); }
           else if (f.id === 'lyricHide') { f.enabled ? startLyricHide() : stopLyricHide(); }
           else if (f.id === 'pluginBtn') { f.enabled ? startPluginBtn() : stopPluginBtn(); }
-          else if (f.id === 'duoColumn') { f.enabled ? startPlaylistLayout() : stopPlaylistLayout(); }
           else if (f.id === 'searchHistory') { f.enabled ? startSearchHistory() : stopSearchHistory(); }
+          else if (f.id === 'dailySign') { f.enabled ? startSignTimer() : stopSignTimer(); }
         });
       }, { deep: true });
 
@@ -1133,14 +1028,102 @@ export async function activate(_ctx) {
     },
   });
 
-  // （歌曲列表简洁模式已移至「歌单布局」插件）
-
   disposeSettings = ctx.ui.settings.define({
     id: 'xiaotoolkit',
     title: '小功能',
-    description: '独立开关每个功能，改动即时生效',
+    description: '签到 + 独立开关每个功能，改动即时生效',
     component: SettingsComp,
   });
+}
+
+// ================== 签到（每日领取VIP） ==================
+
+var _signTimerId = null;
+var _signNotifiedDate = null;
+
+function signApiGet(url, params) {
+  var headers = {};
+  // 从 ctx.stores 构建认证头
+  try {
+    var userStore = ctx.stores.user || ctx.pinia?.state?.value?.user;
+    var deviceStore = ctx.stores.device || ctx.pinia?.state?.value?.device;
+    var parts = [];
+    if (userStore?.info?.token) parts.push('token=' + userStore.info.token);
+    if (userStore?.info?.userid) parts.push('userid=' + userStore.info.userid);
+    if (userStore?.info?.t1) parts.push('t1=' + userStore.info.t1);
+    if (deviceStore?.info?.dfid) parts.push('dfid=' + deviceStore.info.dfid);
+    if (deviceStore?.info?.mid) parts.push('KUGOU_API_MID=' + deviceStore.info.mid);
+    if (deviceStore?.info?.uuid) parts.push('uuid=' + deviceStore.info.uuid);
+    if (deviceStore?.info?.guid) parts.push('KUGOU_API_GUID=' + deviceStore.info.guid);
+    if (parts.length) headers['Authorization'] = parts.join(';');
+  } catch(e) {}
+  var queryStr = params ? '?' + Object.entries(params).map(function(kv) { return kv[0] + '=' + kv[1]; }).join('&') : '';
+  return ctx.electron.api.request({ method: 'GET', url: url, params: params || {}, headers: headers });
+}
+
+async function getSignToday() {
+  try {
+    var res = await signApiGet('/server/now');
+    var body = res?.body;
+    if (body?.status === 1) {
+      var data = body.data || body;
+      var ts = data.now || data.time || data.timestamp || data.server_time || data.serverTime;
+      var val = Number(ts);
+      if (Number.isFinite(val) && val > 0) {
+        var ms = val > 1e12 ? val : val * 1000;
+        return new Date(ms + 8 * 60 * 60 * 1000).toISOString().split('T')[0];
+      }
+    }
+  } catch(e) {}
+  return new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().split('T')[0];
+}
+
+async function doSign() {
+  try {
+    var userState = ctx.pinia?.state?.value?.user;
+    if (!userState?.info?.token) return;
+    var deviceState = ctx.pinia?.state?.value?.device;
+    if (!deviceState?.info?.dfid) return;
+
+    var today = await getSignToday();
+    var recordRes = await signApiGet('/youth/month/vip/record');
+    var recordBody = recordRes?.body;
+    if (recordBody?.status === 1 && recordBody?.data) {
+      var record = recordBody.data;
+      if (record.receive_day === today && record.status === 1) return;
+    }
+    var vipRes = await signApiGet('/youth/day/vip', { receive_day: today });
+    var upgRes = await signApiGet('/youth/day/vip/upgrade');
+    var vipOk = vipRes?.body?.status === 1;
+    var upgOk = upgRes?.body?.status === 1 || upgRes?.body?.error_code === 297002;
+    if (vipOk || upgOk) {
+      var words = ['富强', '民主', '文明', '和谐', '自由', '平等', '公正', '法治'];
+      setTimeout(function() {
+        try {
+          var themeColor = getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim() || '#07C160';
+          var el = document.createElement('div');
+          el.textContent = words[Math.floor(Math.random() * words.length)];
+          el.style.cssText = 'position:fixed;top:0;left:0;width:100%;z-index:999999;font-size:12px;font-weight:700;text-align:center;padding:6px 0 8px;color:' + themeColor + ';background:transparent;opacity:0;transition:opacity 0.3s ease;pointer-events:none;';
+          document.body.appendChild(el);
+          requestAnimationFrame(function() { el.style.opacity = '1'; });
+          setTimeout(function() { el.style.opacity = '0'; setTimeout(function() { el.remove(); }, 300); }, 1800);
+        } catch(e) {}
+      }, 300);
+      if (_signNotifiedDate !== today) _signNotifiedDate = today;
+    }
+  } catch(e) {
+    console.warn('[小功能] 签到异常:', e);
+  }
+}
+
+function startSignTimer() {
+  if (_signTimerId) return;
+  setTimeout(function() { doSign(); }, 3000);
+  _signTimerId = setInterval(function() { doSign(); }, 5 * 60 * 1000);
+}
+
+function stopSignTimer() {
+  if (_signTimerId) { clearInterval(_signTimerId); _signTimerId = null; }
 }
 
 export function deactivate() {
@@ -1148,8 +1131,8 @@ export function deactivate() {
   stopClickToPlay();
   stopLyricHide();
   stopPluginBtn();
-  stopPlaylistLayout();
   stopSearchHistory();
+  stopSignTimer();
   stopEffect();
   stopLyricAlign();
 
