@@ -809,6 +809,7 @@ async function loadFeatureState() {
     if (saved.lyricAlign === undefined) saved.lyricAlign = 'center';
     if (saved.lyricSpacing === undefined) saved.lyricSpacing = 0;
     if (saved.searchHistory === undefined) saved.searchHistory = true;
+    if (saved.dailySign === undefined) saved.dailySign = true;
     featureState = saved;
   } else {
     featureState = {
