@@ -1,6 +1,6 @@
-// ===== 小功能 v1.5.0（含多账号切换） =====
+// ===== 小功能 v1.5.1（含多账号切换） =====
 // Author: 张三 + Max8808
-// 小功能：热门排序 + 收藏歌单自动切换 + 单击播放 + 歌词界面完全沉浸 + 每日福利 + 顶部插件按钮 + 10种桌面特效 + 歌单多列布局(v2) + 搜索历史 + 多账号切换 + 首页卡片
+// 小功能：热门排序 + 收藏歌单自动切换 + 单击播放 + 歌词界面完全沉浸 + 顶部插件按钮 + 10种桌面特效 + 歌单多列布局(v2) + 搜索历史 + 多账号切换
 // 注意：右键下载已独立为单独插件，如需使用请安装 right-click-download
 // 在插件设置面板中可独立开关每个功能
 
@@ -810,7 +810,6 @@ async function loadFeatureState() {
  if (saved.lyricAlign === undefined) saved.lyricAlign = 'center';
  if (saved.lyricSpacing === undefined) saved.lyricSpacing = 0;
  if (saved.searchHistory === undefined) saved.searchHistory = true;
- if (saved.dailySign === undefined) saved.dailySign = true;
  if (saved.accountSwitcher === undefined) saved.accountSwitcher = true;
  featureState = saved;
  } else {
@@ -824,7 +823,6 @@ async function loadFeatureState() {
  lyricAlign: 'center',
  lyricSpacing: 0,
  searchHistory: true,
- dailySign: true,
  accountSwitcher: true,
  };
  }
@@ -832,328 +830,6 @@ async function loadFeatureState() {
 
 async function saveFeatureState() {
  await ctx.storage.set('xiaotoolkit-features', featureState);
-}
-
-
-// ================== 首页卡片一键播放（合并自 ziyong） ==================
-
-var _hcDispose = null;
-var _dailyPlaying = false;
-
-function hcPickValue() {
-  for (var i = 0; i < arguments.length; i++) {
-    var v = arguments[i];
-    if (v !== undefined && v !== null && v !== '') return v;
-  }
-  return '';
-}
-
-function hcParseIntSafe(v, fallback) {
-  if (v === undefined || v === null) return fallback || 0;
-  var n = parseInt(v, 10);
-  return isNaN(n) ? (fallback || 0) : n;
-}
-
-function hcFormatPic(value) {
-  if (!value) return '';
-  var pic = String(value).replace(/\{size\}/g, '400');
-  if (pic.indexOf('//') === 0) pic = 'https:' + pic;
-  return pic;
-}
-
-function hcNormalizeCoverUrl(url, size) {
-  size = size || 400;
-  var raw = String(url || '').trim();
-  if (!raw) return '';
-  var cover = raw.replace('http://', 'https://');
-  if (cover.indexOf('{size}') !== -1) {
-    cover = cover.replace(/\{size\}/g, String(size));
-  }
-  return cover.replace(/c1\.kgimg\.com/g, 'imge.kugou.com');
-}
-
-function hcResolveCover(url, size) {
-  return hcNormalizeCoverUrl(hcFormatPic(url), size);
-}
-
-function hcExtractDailySongs(body) {
-  if (!body || typeof body !== 'object') return [];
-  var data = body.data;
-  if (!data || typeof data !== 'object') return [];
-
-  var candidates = [
-    data.songs && data.songs.list,
-    data.songs && data.songs.songs,
-    data.list,
-    data.info,
-    data.song_list,
-    data.songlist,
-    data.songs,
-  ];
-
-  for (var i = 0; i < candidates.length; i++) {
-    if (Array.isArray(candidates[i]) && candidates[i].length > 0) {
-      return candidates[i];
-    }
-  }
-
-  if (Array.isArray(body.list)) return body.list;
-  if (Array.isArray(body.songs)) return body.songs;
-  if (Array.isArray(body.data)) return body.data;
-  return [];
-}
-
-function hcMapDailySong(item) {
-  var record = item || {};
-  var transParam = record.trans_param || {};
-  var singer = hcPickValue(record.author_name, record.singername, record.singer, record.artist, '');
-  var name = hcPickValue(record.songname, record.filename, record.name, record.title, '未知歌曲');
-  var hash = hcPickValue(record.hash, record.FileHash, record.hash_128, '');
-  var id = hcPickValue(record.mixsongid, record.audio_id, record.album_audio_id, hash, '');
-  var durationRaw = hcParseIntSafe(hcPickValue(record.time_length, record.timelength, record.duration, 0));
-  var duration = durationRaw > 100000 ? Math.floor(durationRaw / 1000) : durationRaw;
-  var rawCover = hcPickValue(
-    record.album_sizable_cover, record.sizable_cover,
-    record.cover, record.pic, record.img,
-    transParam.union_cover, ''
-  );
-  var cover = hcResolveCover(rawCover, 400);
-  var album = hcPickValue(record.album_name, record.albumname, record.album, '');
-
-  return {
-    id: String(id),
-    songId: String(hcPickValue(record.songid, record.song_id, record.audio_id, '')),
-    title: name,
-    name: name,
-    artist: String(singer || '未知歌手'),
-    duration: duration,
-    coverUrl: cover,
-    cover: cover,
-    audioUrl: '',
-    hash: String(hash),
-    mixSongId: hcParseIntSafe(id, 0),
-    album: String(album),
-    albumName: String(album),
-    singers: singer ? [{ name: String(singer) }] : [],
-    artists: singer ? [{ name: String(singer) }] : [],
-  };
-}
-
-function hcMapRankSong(item) {
-  var record = item || {};
-  var audioInfo = record.audio_info || {};
-  var albumInfo = record.album_info || {};
-  var transParam = record.trans_param || {};
-
-  var singer = record.author_name || record.singername || record.singer || '';
-  var name = record.songname || record.name || '未知歌曲';
-  var hash = audioInfo.hash_128 || audioInfo.hash || record.hash || '';
-  var id = record.audio_id || record.mixsongid || audioInfo.audio_id || hash;
-  var durationRaw = hcParseIntSafe(audioInfo.duration_128 || audioInfo.duration || 0);
-  var duration = durationRaw > 100000 ? Math.floor(durationRaw / 1000) : durationRaw;
-  var rawCover = hcPickValue(
-    albumInfo.sizable_cover, transParam.union_cover,
-    record.img, record.pic, ''
-  );
-  var cover = hcResolveCover(rawCover, 400);
-  var album = albumInfo.album_name || record.album_name || '';
-
-  return {
-    id: String(id),
-    songId: String(record.audio_id || ''),
-    title: name,
-    name: name,
-    artist: String(singer || '未知歌手'),
-    duration: duration,
-    coverUrl: cover,
-    cover: cover,
-    audioUrl: '',
-    hash: String(hash),
-    mixSongId: hcParseIntSafe(id, 0),
-    album: String(album),
-    albumName: String(album),
-    singers: singer ? [{ name: String(singer) }] : [],
-    artists: singer ? [{ name: String(singer) }] : [],
-  };
-}
-
-function hcBuildAuthFromStore() {
-  var piniaState = ctx.pinia.state.value;
-  var userInfo = piniaState.user && piniaState.user.info;
-  var deviceInfo = piniaState.device && piniaState.device.info;
-
-  var authParts = [];
-  if (userInfo) {
-    if (userInfo.token) authParts.push('token=' + userInfo.token);
-    if (userInfo.userid) authParts.push('userid=' + userInfo.userid);
-    if (userInfo.t1) authParts.push('t1=' + userInfo.t1);
-  }
-  if (deviceInfo) {
-    if (deviceInfo.dfid) authParts.push('dfid=' + deviceInfo.dfid);
-    if (deviceInfo.mid) authParts.push('KUGOU_API_MID=' + deviceInfo.mid);
-    if (deviceInfo.uuid) authParts.push('uuid=' + deviceInfo.uuid);
-    if (deviceInfo.guid) authParts.push('KUGOU_API_GUID=' + deviceInfo.guid);
-    if (deviceInfo.serverDev) authParts.push('KUGOU_API_DEV=' + deviceInfo.serverDev);
-    if (deviceInfo.mac) authParts.push('KUGOU_API_MAC=' + deviceInfo.mac);
-  }
-
-  var headers = {};
-  if (authParts.length > 0) headers['Authorization'] = authParts.join(';');
-  return headers;
-}
-
-async function hcPlayDailyRecommend() {
-  if (_dailyPlaying) return;
-  _dailyPlaying = true;
-
-  try {
-    var headers = hcBuildAuthFromStore();
-    console.log('[小功能] 获取每日推荐');
-
-    var res = await ctx.electron.api.request({
-      method: 'GET',
-      url: '/everyday/recommend',
-      headers: headers,
-    });
-
-    var body = res.body || res;
-    var rawList = hcExtractDailySongs(body);
-
-    if (!rawList || rawList.length === 0) {
-      ctx.toast.danger('今日暂无推荐歌曲');
-      _dailyPlaying = false;
-      return;
-    }
-
-    var songs = rawList.map(hcMapDailySong);
-
-    await ctx.playlist.replaceAndPlay(songs, {
-      queueId: 'queue:daily-recommend',
-      title: '每日推荐',
-      subtitle: '为你量身定制',
-      type: 'daily-recommend',
-      dynamic: false,
-    });
-
-    ctx.toast.success('正在播放今日推荐 (' + songs.length + '首)');
-  } catch (err) {
-    console.error('[小功能] 每日推荐播放失败:', err);
-    ctx.toast.danger('获取每日推荐失败');
-  }
-
-  _dailyPlaying = false;
-}
-
-async function hcPlayRankingTop() {
-  if (_dailyPlaying) return;
-  _dailyPlaying = true;
-
-  try {
-    var headers = hcBuildAuthFromStore();
-    console.log('[小功能] 获取排行榜');
-
-    var topRes = await ctx.electron.api.request({
-      method: 'GET', url: '/rank/top', headers: headers,
-    });
-    var topBody = topRes.body || topRes;
-    var topData = topBody.data || topBody;
-    var rankList = topData.list || topData.info || topData.songlist || topData;
-    if (!Array.isArray(rankList)) {
-      var listRes = await ctx.electron.api.request({
-        method: 'GET', url: '/rank/list', headers: headers,
-      });
-      var listBody = listRes.body || listRes;
-      var listData = listBody.data || listBody;
-      rankList = listData.list || listData.info || listData;
-    }
-    if (!Array.isArray(rankList) || rankList.length === 0) {
-      ctx.toast.danger('暂无排行榜');
-      _dailyPlaying = false;
-      return;
-    }
-
-    var firstRank = null;
-    for (var i = 0; i < rankList.length; i++) {
-      var r = rankList[i];
-      var rid = r.id || r.rankid || r.rankId || r.specialid;
-      if (rid) { firstRank = { item: r, id: rid }; break; }
-    }
-    if (!firstRank) {
-      ctx.toast.danger('无可用排行榜');
-      _dailyPlaying = false;
-      return;
-    }
-
-    console.log('[小功能] 榜单:', firstRank.item.name || '未命名', 'id:', firstRank.id);
-
-    var songsRes = await ctx.electron.api.request({
-      method: 'GET', url: '/rank/audio',
-      params: { rankid: firstRank.id, page: 1, pagesize: 100 },
-      headers: headers,
-    });
-    var songsBody = songsRes.body || songsRes;
-    var songsData = songsBody.data || songsBody;
-    var songList = songsData.list || songsData.info || songsData.songlist || songsData.songs || songsData;
-    if (!Array.isArray(songList) || songList.length === 0) {
-      ctx.toast.danger('排行榜暂无歌曲');
-      _dailyPlaying = false;
-      return;
-    }
-
-    var songs = songList.map(hcMapRankSong);
-
-    await ctx.playlist.replaceAndPlay(songs, {
-      queueId: 'queue:ranking:' + firstRank.id,
-      title: firstRank.item.name || '排行榜',
-      subtitle: '实时热门趋势',
-      type: 'ranking',
-      dynamic: false,
-    });
-
-    ctx.toast.success('正在播放「' + (firstRank.item.name || '排行榜') + '」(' + songs.length + '首)');
-  } catch (err) {
-    console.error('[小功能] 排行榜播放失败:', err);
-    ctx.toast.danger('获取排行榜失败');
-  }
-
-  _dailyPlaying = false;
-}
-
-function startHomeCardPlay() {
-  if (_hcDispose) return;
-  console.log('[小功能] 首页卡片一键播放已启动');
-
-  function onFeatureActionClick(e) {
-    var trigger = e.target.closest('.feature-action, .feature-icon');
-    if (!trigger) return;
-
-    var card = trigger.closest('.home-feature-card');
-    if (!card) return;
-
-    var isDaily = card.querySelector('.feature-icon.gradient-primary');
-    var isRanking = card.querySelector('.feature-icon.gradient-secondary') && (card.querySelector('.feature-title') || {}).textContent === '排行榜';
-
-    if (!isDaily && !isRanking) return;
-
-    console.log('[小功能] ' + (isDaily ? '每日推荐' : '排行榜') + '图标被点击，直接播放');
-    e.stopPropagation();
-    e.preventDefault();
-
-    if (isDaily) {
-      hcPlayDailyRecommend();
-    } else {
-      hcPlayRankingTop();
-    }
-  }
-
-  document.addEventListener('click', onFeatureActionClick, true);
-  _hcDispose = function() {
-    document.removeEventListener('click', onFeatureActionClick, true);
-  };
-}
-
-function stopHomeCardPlay() {
-  if (_hcDispose) { _hcDispose(); _hcDispose = null; }
 }
 
 
@@ -1548,10 +1224,8 @@ export async function activate(_ctx) {
  if (featureState.lyricHide) startLyricHide();
  if (featureState.pluginBtn) startPluginBtn();
  if (featureState.searchHistory) startSearchHistory();
- if (featureState.dailySign !== false) startSignTimer();
  if (featureState.effect) startEffect(featureState.effectMode || 'snow');
  startLyricAlign(featureState.lyricAlign || 'center');
- if (featureState.homeCard) startHomeCardPlay();
  if (featureState.accountSwitcher) { asStart(ctx); }
 
  var h = ctx.vue.h;
@@ -1566,9 +1240,7 @@ export async function activate(_ctx) {
  { id: 'lyricHide', icon: '🙈', label: '歌词界面完全沉浸', desc: '控制栏和工具栏自动隐藏', enabled: featureState.lyricHide },
  { id: 'pluginBtn', icon: '🔧', label: '顶部插件管理入口', desc: '搜索框右侧添加插件快捷按钮', enabled: featureState.pluginBtn },
  { id: 'searchHistory', icon: '🕐', label: '搜索历史', desc: '搜索框显示历史搜索记录', enabled: featureState.searchHistory },
- { id: 'dailySign', icon: '🎁', label: '每日福利', desc: '每日定时领取平台成长值', enabled: featureState.dailySign !== false },
  { id: 'accountSwitcher', icon: '🔄', label: '多账号切换', desc: '侧栏显示多账号切换按钮', enabled: featureState.accountSwitcher !== false },
-    { id: 'homeCard', icon: '🏠', label: '首页卡片', desc: '每日推荐/排行榜一键播放，不跳转', enabled: featureState.homeCard !== false },
  ],
  });
  var currentEffectMode = ctx.vue.ref(featureState.effectMode || 'snow');
@@ -1587,9 +1259,7 @@ export async function activate(_ctx) {
  else if (f.id === 'lyricHide') { f.enabled ? startLyricHide() : stopLyricHide(); }
  else if (f.id === 'pluginBtn') { f.enabled ? startPluginBtn() : stopPluginBtn(); }
  else if (f.id === 'searchHistory') { f.enabled ? startSearchHistory() : stopSearchHistory(); }
- else if (f.id === 'dailySign') { f.enabled ? startSignTimer() : stopSignTimer(); }
  else if (f.id === 'accountSwitcher') { f.enabled ? asStart(ctx) : asStop(); }
-    else if (f.id === 'homeCard') { f.enabled ? startHomeCardPlay() : stopHomeCardPlay(); }
  });
  }, { deep: true });
 
@@ -1750,103 +1420,15 @@ export async function activate(_ctx) {
 
 // ================== 签到（每日领取VIP） ==================
 
-var _signTimerId = null;
-var _signNotifiedDate = null;
-
-function signApiGet(url, params) {
- var headers = {};
- // 从 ctx.stores 构建认证头
- try {
- var userStore = ctx.stores.user || ctx.pinia?.state?.value?.user;
- var deviceStore = ctx.stores.device || ctx.pinia?.state?.value?.device;
- var parts = [];
- if (userStore?.info?.token) parts.push('token=' + userStore.info.token);
- if (userStore?.info?.userid) parts.push('userid=' + userStore.info.userid);
- if (userStore?.info?.t1) parts.push('t1=' + userStore.info.t1);
- if (deviceStore?.info?.dfid) parts.push('dfid=' + deviceStore.info.dfid);
- if (deviceStore?.info?.mid) parts.push('KUGOU_API_MID=' + deviceStore.info.mid);
- if (deviceStore?.info?.uuid) parts.push('uuid=' + deviceStore.info.uuid);
- if (deviceStore?.info?.guid) parts.push('KUGOU_API_GUID=' + deviceStore.info.guid);
- if (parts.length) headers['Authorization'] = parts.join(';');
- } catch(e) {}
- var queryStr = params ? '?' + Object.entries(params).map(function(kv) { return kv[0] + '=' + kv[1]; }).join('&') : '';
- return ctx.electron.api.request({ method: 'GET', url: url, params: params || {}, headers: headers });
-}
-
-async function getSignToday() {
- try {
- var res = await signApiGet('/server/now');
- var body = res?.body;
- if (body?.status === 1) {
- var data = body.data || body;
- var ts = data.now || data.time || data.timestamp || data.server_time || data.serverTime;
- var val = Number(ts);
- if (Number.isFinite(val) && val > 0) {
- var ms = val > 1e12 ? val : val * 1000;
- return new Date(ms + 8 * 60 * 60 * 1000).toISOString().split('T')[0];
- }
- }
- } catch(e) {}
- return new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().split('T')[0];
-}
-
-async function doSign() {
- try {
- var userState = ctx.pinia?.state?.value?.user;
- if (!userState?.info?.token) return;
- var deviceState = ctx.pinia?.state?.value?.device;
- if (!deviceState?.info?.dfid) return;
-
- var today = await getSignToday();
- var recordRes = await signApiGet('/youth/month/vip/record');
- var recordBody = recordRes?.body;
- if (recordBody?.status === 1 && recordBody?.data) {
- var record = recordBody.data;
- if (record.receive_day === today && record.status === 1) return;
- }
- var vipRes = await signApiGet('/youth/day/vip', { receive_day: today });
- var upgRes = await signApiGet('/youth/day/vip/upgrade');
- var vipOk = vipRes?.body?.status === 1;
- var upgOk = upgRes?.body?.status === 1 || upgRes?.body?.error_code === 297002;
- if (vipOk || upgOk) {
- var words = ['富强', '民主', '文明', '和谐', '自由', '平等', '公正', '法治'];
- setTimeout(function() {
- try {
- var themeColor = getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim() || '#07C160';
- var el = document.createElement('div');
- el.textContent = words[Math.floor(Math.random() * words.length)];
- el.style.cssText = 'position:fixed;top:0;left:0;width:100%;z-index:999999;font-size:12px;font-weight:700;text-align:center;padding:6px 0 8px;color:' + themeColor + ';background:transparent;opacity:0;transition:opacity 0.3s ease;pointer-events:none;';
- document.body.appendChild(el);
- requestAnimationFrame(function() { el.style.opacity = '1'; });
- setTimeout(function() { el.style.opacity = '0'; setTimeout(function() { el.remove(); }, 300); }, 1800);
- } catch(e) {}
- }, 300);
- if (_signNotifiedDate !== today) _signNotifiedDate = today;
- }
- } catch(e) {
- console.warn('[小功能] 签到异常:', e);
- }
-}
-
-function startSignTimer() {
- if (_signTimerId) return;
- setTimeout(function() { doSign(); }, 3000);
- _signTimerId = setInterval(function() { doSign(); }, 5 * 60 * 1000);
-}
-
-function stopSignTimer() {
- if (_signTimerId) { clearInterval(_signTimerId); _signTimerId = null; }
 }
 
 export function deactivate() {
- stopHomeCardPlay();
  asStop();
  stopArtistSort();
  stopClickToPlay();
  stopLyricHide();
  stopPluginBtn();
  stopSearchHistory();
- stopSignTimer();
  stopEffect();
  stopLyricAlign();
 
