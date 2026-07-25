@@ -1420,7 +1420,7 @@ export async function activate(_ctx) {
 
 // ================== 签到（每日领取VIP） ==================
 
-}
+
 
 export function deactivate() {
  asStop();
