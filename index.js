@@ -7,6 +7,9 @@
 var ctx = null;
 var as_ctx = null;
 var disposeSettings = null;
+var as_pollTimer = null;
+var as_trySaveTimer = null;
+var as_trySaveRetries = 0;
 
 // ================== 7. 桌面特效 ==================
 // 使用 OffscreenCanvas + Web Worker，粒子渲染跑在独立线程，切歌不卡
@@ -268,7 +271,7 @@ function startPluginBtn() {
  if (!nav) return;
  var searchBox = nav.querySelector('.tb-search');
  if (!searchBox) return;
- if (document.getElementById('zhs-pb-btn')) return;
+ if (document.getElementById('zhs-pb-btn')) { pbBtn = document.getElementById('zhs-pb-btn'); return; }
  var btn = document.createElement('button');
  btn.id = 'zhs-pb-btn';
  btn.className = 'zhs-plugin-btn nav-btn';
@@ -286,8 +289,7 @@ function startPluginBtn() {
  });
  searchBox.parentNode.insertBefore(btn, searchBox.nextSibling);
  pbBtn = btn;
- clearInterval(pbCheckLoop);
- pbCheckLoop = null;
+ // 不停止轮询：Vue 重渲染移除按钮后会自动重新注入
  }, 800);
 }
 
@@ -516,6 +518,7 @@ function stopLyricHide() {
 
 var laStyle = null;
 var laTimer = null;
+var laLastCSS = null;
 
 function laGetCSS(align, spacing, padding) {
  var rowJustify = align === 'center' ? 'center' : (align === 'left' ? 'flex-start' : 'flex-end');
@@ -524,7 +527,6 @@ function laGetCSS(align, spacing, padding) {
  '.lyric-scroller .lyric-row { justify-content: ' + rowJustify + ' !important; position: relative; }',
  '.lyric-scroller .lyric-line { text-align: ' + align + ' !important; }',
  align === 'left' ? '.lyric-scroller { padding-left: ' + padding + 'px !important; }' : (align === 'right' ? '.lyric-scroller { padding-right: ' + padding + 'px !important; }' : undefined),
- '.lyric-mode .song-header { text-align: ' + align + ' !important; }',
  '.static-lyric-list { text-align: ' + align + ' !important; }',
  '.static-lyric-row { text-align: ' + align + ' !important; }',
  align === 'left' ? '.cover-mode .lyric-side { padding-left: 108px !important; }' : undefined,
@@ -543,17 +545,22 @@ function laGetCSS(align, spacing, padding) {
 }
 
 function laApply(align, spacing) {
- laRemove();
  var padding = 180;
+ var css = laGetCSS(align, spacing, padding);
+ // CSS 内容没变时跳过，避免每 500ms 重建 style 标签
+ if (laStyle && laLastCSS === css && laStyle.isConnected) return;
+ laRemove();
  var s = document.createElement('style');
  s.id = 'zhs-la-style';
- s.textContent = laGetCSS(align, spacing, padding);
+ s.textContent = css;
  document.head.appendChild(s);
+ laLastCSS = css;
  laStyle = s;
 }
 
 function laRemove() {
  if (laStyle) { laStyle.remove(); laStyle = null; }
+ laLastCSS = null;
 }
 
 function startLyricAlign(align) {
@@ -595,7 +602,7 @@ function _shScheduleHide(id, delay) {
 }
 function _shInputAlive(id) { return _shInputs[id] && _shInputs[id].isConnected; }
 
-function _shMakeOverlay(history) {
+function _shMakeOverlay(id, history) {
  var o = document.createElement('div');
  o.className = 'search-history-overlay';
  o.style.cssText = 'z-index:999999;box-sizing:border-box;background:color-mix(in srgb,var(--bg-main,#f0f0f0)75%,transparent);border:1px solid var(--border-subtle,rgba(128,128,128,0.15));border-radius:14px;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);padding:6px 8px;font-size:14px;color:var(--color-text-main,#333);pointer-events:auto;box-shadow:0 4px 24px rgba(0,0,0,0.1);';
@@ -631,6 +638,8 @@ function _shMakeOverlay(history) {
  chip.style.cssText = 'display:inline-flex;align-items:center;position:relative;padding:3px 8px;border-radius:14px;cursor:pointer;font-size:12px;line-height:1.5;color:color-mix(in srgb,var(--color-primary,#07c) 80%,var(--color-text-main,#333) 20%);background:color-mix(in srgb,var(--color-text-main)8%,transparent);transition:background 0.12s;user-select:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;';
  chip.innerHTML = '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">' + kw.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</span><span class="__del" style="flex-shrink:0;margin-left:4px;display:none;width:14px;height:14px;line-height:14px;text-align:center;border-radius:50%;font-size:11px;cursor:pointer;opacity:0.6" title="删除">×</span>';
  var delBtn = chip.querySelector('.__del');
+ // 用 IIFE 固定每个词条的 chip/delBtn/kw 引用，避免 var 闭包全部指向最后一个词条
+ (function(kw, chip, delBtn){
  chip.addEventListener('mouseenter', function(){ chip.style.background='color-mix(in srgb,var(--color-text-main)14%,transparent)'; if(delBtn)delBtn.style.display='inline-block'; });
  chip.addEventListener('mouseleave', function(){ chip.style.background='color-mix(in srgb,var(--color-text-main)8%,transparent)'; if(delBtn)delBtn.style.display='none'; });
  delBtn.addEventListener('click', function(e){
@@ -638,21 +647,21 @@ function _shMakeOverlay(history) {
  if (ctx && ctx.stores && ctx.stores.settings) {
  ctx.stores.settings.removeFromSearchHistory(kw);
  chip.remove();
- if (wrap.children.length === 0) { for (var k in _shOverlays) { if (_shOverlays[k] === o) { _shHideDropdown(k); break; } } }
+ // 用本 overlay 自己的 id，而不是遍历找第一个
+ if (wrap.children.length === 0) { _shHideDropdown(id); }
  }
  });
- (function(keyword){
  chip.addEventListener('click', function(){
- var inputEl = null, inputId = null;
- for (var k in _shOverlays) { if (_shOverlays[k] && _shOverlays[k].isConnected) { inputEl = _shInputs[k]; inputId = k; break; } }
- if (!inputEl) return;
+ // 直接取本 overlay 绑定的输入框，避免多个输入框并存时填错
+ var inputEl = _shInputs[id];
+ if (!inputEl || !inputEl.isConnected) return;
  _shHideAll();
  var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
- nativeSetter.call(inputEl, keyword);
+ nativeSetter.call(inputEl, kw);
  inputEl.dispatchEvent(new Event('input', { bubbles: true }));
  setTimeout(function(){ inputEl.dispatchEvent(new KeyboardEvent('keydown', { key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true, cancelable:true })); }, 80);
  });
- })(kw);
+ })(kw, chip, delBtn);
  wrap.appendChild(chip);
  }
  o.appendChild(wrap);
@@ -704,7 +713,7 @@ function _shShowForInput(id, inputEl) {
  if (!history || history.length === 0) return;
  var isGlobal = id && id.indexOf('.tb-search-input') === 0;
  var parent = isGlobal ? (document.querySelector('.tb-search') || inputEl.offsetParent || document.body) : (inputEl.offsetParent || document.body);
- var overlay = _shMakeOverlay(history);
+ var overlay = _shMakeOverlay(id, history);
  overlay.style.position = 'absolute'; overlay.style.boxSizing = 'border-box';
  if (isGlobal) {
  var tbSearch = document.querySelector('.tb-search');
@@ -888,7 +897,8 @@ function saveCurrentAccount() {
 
 function switchTo(acc) {
  try {
- var us = ctx.pinia._s.get('user');
+ // pinia 内部 _s 不存在时给出明确提示，而不是静默抛错
+ var us = (ctx.pinia && ctx.pinia._s) ? ctx.pinia._s.get('user') : null;
  if (!us || !us.info) { ctx.toast.danger('切换失败'); return; }
 
  // 如果目标就是当前账号，跳过
@@ -932,6 +942,18 @@ function switchTo(acc) {
  }
 
  ctx.toast.success('已切换到: ' + acc.nickname);
+
+ // 停播并清空当前歌曲：播放器是主进程原生播放器，页面 reload 不会中断它。
+ // 若不处理，旧账号的歌会继续播放，report-listen 会把收听上报到新账号
+ try {
+ var ps = (ctx.pinia && ctx.pinia._s) ? ctx.pinia._s.get('player') : null;
+ if (ps) {
+ if (typeof ps.stop === 'function') ps.stop();
+ ps.currentTrackId = null; // 防 reload 后按持久化的 currentTrackId 恢复
+ }
+ } catch(e) {
+ console.warn('[账号切换] 重置播放器失败:', e);
+ }
 
  // 延迟足够时间再 reload，确保 pinia persist 的 SQLite 写入已完成
  // persist 内部有 120ms 延迟 + 异步 IPC + SQLite 写入
@@ -1113,7 +1135,8 @@ function injectCSS() {
 // ========== 挂载按钮 ==========
 
 function mountButton() {
- var sidebar = document.querySelector('.sidebar-inner') || document.querySelector('.sidebar') || document.querySelector('[class*=sidebar]');
+ // 当前版本侧栏结构：.sidebar-rail-bottom 为 rail 底部；旧版本兼容 .sidebar-inner/.sidebar
+ var sidebar = document.querySelector('.sidebar-rail-bottom') || document.querySelector('.sidebar-inner') || document.querySelector('.sidebar') || document.querySelector('[class*=sidebar]');
  if (!sidebar) return false;
  if (sidebar.querySelector('.as-btn')) return true;
 
@@ -1146,13 +1169,15 @@ function asStart(_ctx) {
 
  injectCSS();
 
- // 保存当前账号（延迟重试，等 pinia 就绪）
+ // 保存当前账号（延迟重试，等 pinia 就绪；重试次数有上限）
+ var lastUserId = '';
+ var lastToken = '';
  function trySave() {
  var acc = captureCurrent();
  if (acc) {
+ lastUserId = acc.userid;
+ lastToken = acc.token;
  saveCurrentAccount();
- var lastUserId = acc.userid;
- var lastToken = acc.token;
 
  // 检测刚切换的标记，强制刷新用户信息（等级/VIP等）
  if (localStorage.getItem('as_just_switched')) {
@@ -1173,8 +1198,16 @@ function asStart(_ctx) {
  });
  }
 
- // 轮询检测登录变化
- setInterval(function() {
+ } else if (as_trySaveRetries < 60) {
+ // 未登录/未就绪时延迟重试，最多 30 秒；之后交给下面的轮询兜底
+ as_trySaveRetries++;
+ as_trySaveTimer = setTimeout(trySave, 500);
+ }
+ }
+ trySave();
+
+ // 轮询检测登录变化（无条件启动；未登录时 captureCurrent 返回 null 自动跳过）
+ as_pollTimer = setInterval(function() {
  if (!ctx || !ctx.pinia) return;
  var now = captureCurrent();
  if (!now) return;
@@ -1184,11 +1217,6 @@ function asStart(_ctx) {
  saveCurrentAccount();
  }
  }, 3000);
- } else {
- setTimeout(trySave, 500);
- }
- }
- trySave();
 
  // 注入切换按钮
  var as_sidebarObserver = new MutationObserver(function(){ mountButton(); });
@@ -1202,13 +1230,17 @@ function asStart(_ctx) {
 var as_cleanupDom = null;
 
 function asStop() {
+ if (as_pollTimer) { clearInterval(as_pollTimer); as_pollTimer = null; }
+ if (as_trySaveTimer) { clearTimeout(as_trySaveTimer); as_trySaveTimer = null; }
+ as_trySaveRetries = 0;
  if (typeof as_cleanupDom === 'function') as_cleanupDom();
  as_cleanupDom = null;
  var st = document.getElementById(AS_STYLE_ID);
  if (st) st.remove();
  document.querySelectorAll('.as-ol, .as-dd').forEach(function(el) { el.remove(); });
  document.querySelectorAll('.as-btn').forEach(function(el) { el.remove(); });
- ctx = null;
+ // 注意：不要在这里把共享的 ctx 置 null，否则设置面板里关闭“多账号切换”会连累
+ // 其他功能（顶部插件按钮、搜索历史等）全部失效，且重新开启时 asStart(ctx) 拿到 null
 }
 
 
