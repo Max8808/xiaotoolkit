@@ -1,15 +1,20 @@
-// ===== 小功能 v1.5.1（含多账号切换） =====
+// ===== 小功能 v1.5.2（含多账号切换） =====
 // Author: 张三 + Max8808
-// 小功能：热门排序 + 单击播放 + 歌词界面完全沉浸 + 顶部插件按钮 + 10种桌面特效 + 搜索历史 + 多账号切换
+// 小功能：单击播放 + 歌词界面完全沉浸 + 顶部插件按钮 + 10种桌面特效 + 多账号切换
 // 注意：右键下载已独立为单独插件，如需使用请安装 right-click-download
+// 修复：关闭插件后「切换账号」按钮残留、点击无反应；asStart 幂等、asStop 彻底清理
+// v1.5.2：移除「歌手热门排序」与「搜索历史」两个功能（按用户要求）
 // 在插件设置面板中可独立开关每个功能
-
 var ctx = null;
 var as_ctx = null;
 var disposeSettings = null;
 var as_pollTimer = null;
 var as_trySaveTimer = null;
 var as_trySaveRetries = 0;
+var as_started = false;      // 防止 asStart 被重复调用导致 observer/定时器泄漏
+var as_ensureTimer = null;   // 挂载按钮的重试定时器
+var as_nodeObserver = null;  // 侧栏 DOM 监听
+var as_refreshTimers = [];   // 切换后刷新用户信息的定时器
 
 // ================== 7. 桌面特效 ==================
 // 使用 OffscreenCanvas + Web Worker，粒子渲染跑在独立线程，切歌不卡
@@ -310,71 +315,6 @@ function stopPluginBtn() {
  if (s) s.remove();
 }
 
-// ===================== 1. 热门排序 =====================
-
-var _asTimer = null;
-var _asLoop = null;
-var _asDoneUrl = '';
-
-function startArtistSort() {
- if (_asLoop) return;
-
- _asTimer = setTimeout(function() {
- _asTimer = null;
-
- _asLoop = setInterval(function() {
- try {
- var container = document.querySelector('.artist-detail-container');
- if (!container) {
- _asDoneUrl = '';
- return;
- }
-
- var currentUrl = window.location.pathname;
-
- if (_asDoneUrl === currentUrl) return;
-
- var trigger = container.querySelector('.artist-sort-trigger');
- if (!trigger) return;
-
- var triggerText = trigger.textContent || '';
- var isHot = triggerText.indexOf('热门') !== -1;
-
- if (isHot) {
- _asDoneUrl = currentUrl;
- return;
- }
-
- trigger.click();
-
- _asDoneUrl = currentUrl;
-
- setTimeout(function() {
- try {
- var menuItems = document.querySelectorAll('.artist-sort-menu-item');
- for (var i = 0; i < menuItems.length; i++) {
- var item = menuItems[i];
- if ((item.textContent || '').trim().indexOf('热门') !== -1) {
- item.click();
- console.log('[zhs] 已切换排序为热门');
- break;
- }
- }
- } catch(e) { /* silent */ }
- }, 80);
-
- } catch(e) { /* silent */ }
- }, 1200);
-
- }, 3000);
-}
-
-function stopArtistSort() {
- if (_asTimer) { clearTimeout(_asTimer); _asTimer = null; }
- if (_asLoop) { clearInterval(_asLoop); _asLoop = null; }
- _asDoneUrl = '';
-}
-
 // ================ 3. 单击任意位置播放 ================
 // 单击歌曲列表的任意位置（歌名、歌手等）即可播放
 // 不影响已有按钮操作（播放图标、菜单等）
@@ -580,235 +520,6 @@ function stopLyricAlign() {
  laRemove();
 }
 
-// ================== 10. 搜索历史 ==================
-
-var _shInputSelectors = ['.search-input', '.tb-search-input'];
-var _shOverlayWidth = 280;
-var _shOverlays = {};
-var _shInputs = {};
-var _shHandlers = {};
-var _shRepositionHandlers = {};
-var _shHideTimers = {};
-var _shPollTimer = null;
-var _shBodyObserver = null;
-
-function _shCancelHide(id) {
- if (id != null && _shHideTimers[id]) { clearTimeout(_shHideTimers[id]); delete _shHideTimers[id]; }
-}
-function _shCancelAllHide() { for (var k in _shHideTimers) _shCancelHide(k); }
-function _shScheduleHide(id, delay) {
- _shCancelHide(id);
- _shHideTimers[id] = setTimeout(function(){ _shHideDropdown(id); delete _shHideTimers[id]; }, delay);
-}
-function _shInputAlive(id) { return _shInputs[id] && _shInputs[id].isConnected; }
-
-function _shMakeOverlay(id, history) {
- var o = document.createElement('div');
- o.className = 'search-history-overlay';
- o.style.cssText = 'z-index:999999;box-sizing:border-box;background:color-mix(in srgb,var(--bg-main,#f0f0f0)75%,transparent);border:1px solid var(--border-subtle,rgba(128,128,128,0.15));border-radius:14px;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);padding:6px 8px;font-size:14px;color:var(--color-text-main,#333);pointer-events:auto;box-shadow:0 4px 24px rgba(0,0,0,0.1);';
- o.addEventListener('mouseenter', function(){
- for (var k in _shOverlays) { if (_shOverlays[k] === o) { _shCancelHide(k); break; } }
- });
- o.addEventListener('mouseleave', function(){
- for (var k in _shOverlays) { if (_shOverlays[k] === o) { _shScheduleHide(k, 300); break; } }
- });
- o.addEventListener('pointerdown', function(e){ e.preventDefault(); });
-
- var h = document.createElement('div');
- h.style.cssText = 'padding:0 0 4px 0;font-size:12px;opacity:0.5;font-weight:600;display:flex;align-items:center;pointer-events:auto;';
- var hLabel = document.createElement('span');
- hLabel.textContent = '历史搜索';
- var hClear = document.createElement('span');
- hClear.textContent = '清空';
- hClear.style.cssText = 'margin-left:auto;cursor:pointer;opacity:0.6;font-weight:400;font-size:11px;padding:2px 6px;border-radius:4px;';
- hClear.addEventListener('mouseenter', function(){ hClear.style.opacity='1'; hClear.style.background='var(--surface-elevated,color-mix(in srgb,var(--color-text-main)10%,transparent))'; });
- hClear.addEventListener('mouseleave', function(){ hClear.style.opacity='0.6'; hClear.style.background=''; });
- hClear.addEventListener('click', function(e){
- e.stopPropagation();
- if (ctx && ctx.stores && ctx.stores.settings) { ctx.stores.settings.clearSearchHistory(); _shHideAll(); }
- });
- h.appendChild(hLabel); h.appendChild(hClear); o.appendChild(h);
-
- var maxItems = Math.min(history.length, 9);
- var wrap = document.createElement('div');
- wrap.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:5px;pointer-events:auto;';
- for (var i = 0; i < maxItems; i++) {
- var kw = history[i];
- var chip = document.createElement('span');
- chip.style.cssText = 'display:inline-flex;align-items:center;position:relative;padding:3px 8px;border-radius:14px;cursor:pointer;font-size:12px;line-height:1.5;color:color-mix(in srgb,var(--color-primary,#07c) 80%,var(--color-text-main,#333) 20%);background:color-mix(in srgb,var(--color-text-main)8%,transparent);transition:background 0.12s;user-select:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;';
- chip.innerHTML = '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">' + kw.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</span><span class="__del" style="flex-shrink:0;margin-left:4px;display:none;width:14px;height:14px;line-height:14px;text-align:center;border-radius:50%;font-size:11px;cursor:pointer;opacity:0.6" title="删除">×</span>';
- var delBtn = chip.querySelector('.__del');
- // 用 IIFE 固定每个词条的 chip/delBtn/kw 引用，避免 var 闭包全部指向最后一个词条
- (function(kw, chip, delBtn){
- chip.addEventListener('mouseenter', function(){ chip.style.background='color-mix(in srgb,var(--color-text-main)14%,transparent)'; if(delBtn)delBtn.style.display='inline-block'; });
- chip.addEventListener('mouseleave', function(){ chip.style.background='color-mix(in srgb,var(--color-text-main)8%,transparent)'; if(delBtn)delBtn.style.display='none'; });
- delBtn.addEventListener('click', function(e){
- e.stopPropagation();
- if (ctx && ctx.stores && ctx.stores.settings) {
- ctx.stores.settings.removeFromSearchHistory(kw);
- chip.remove();
- // 用本 overlay 自己的 id，而不是遍历找第一个
- if (wrap.children.length === 0) { _shHideDropdown(id); }
- }
- });
- chip.addEventListener('click', function(){
- // 直接取本 overlay 绑定的输入框，避免多个输入框并存时填错
- var inputEl = _shInputs[id];
- if (!inputEl || !inputEl.isConnected) return;
- _shHideAll();
- var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
- nativeSetter.call(inputEl, kw);
- inputEl.dispatchEvent(new Event('input', { bubbles: true }));
- setTimeout(function(){ inputEl.dispatchEvent(new KeyboardEvent('keydown', { key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true, cancelable:true })); }, 80);
- });
- })(kw, chip, delBtn);
- wrap.appendChild(chip);
- }
- o.appendChild(wrap);
- return o;
-}
-
-function _shMakeHandler(id) {
- if (_shHandlers[id]) return _shHandlers[id];
- _shHandlers[id] = {
- mouseenter: function(){
- _shCancelHide(id);
- _shInputs[id] = this;
- if (!this.value.trim()) { setTimeout(function(){ _shShowForInput(id, _shInputs[id]); }, 16); }
- },
- mouseleave: function(){ _shScheduleHide(id, 400); },
- focus: function(){ _shCancelHide(id); _shInputs[id] = this; },
- blur: function(){ _shScheduleHide(id, 250); },
- input: function(){
- _shInputs[id] = this;
- if (this.value.trim()) { _shHideDropdown(id); } else { _shShowForInput(id, this); }
- }
- };
- return _shHandlers[id];
-}
-
-function _shAttachToInput(id, el) {
- if (_shInputs[id] === el && _shInputAlive(id)) return;
- if (_shInputs[id] && _shInputs[id] !== el && _shHandlers[id]) {
- var h = _shHandlers[id];
- _shInputs[id].removeEventListener('mouseenter', h.mouseenter);
- _shInputs[id].removeEventListener('mouseleave', h.mouseleave);
- _shInputs[id].removeEventListener('focus', h.focus);
- _shInputs[id].removeEventListener('blur', h.blur);
- _shInputs[id].removeEventListener('input', h.input);
- }
- _shInputs[id] = el;
- var h = _shMakeHandler(id);
- el.addEventListener('mouseenter', h.mouseenter);
- el.addEventListener('mouseleave', h.mouseleave);
- el.addEventListener('focus', h.focus);
- el.addEventListener('blur', h.blur);
- el.addEventListener('input', h.input);
-}
-
-function _shShowForInput(id, inputEl) {
- if (!ctx || !ctx.stores || !ctx.stores.settings || !inputEl) return;
- if (_shOverlays[id] && _shOverlays[id].isConnected) return;
- var history = ctx.stores.settings.searchHistory || [];
- if (!history || history.length === 0) return;
- var isGlobal = id && id.indexOf('.tb-search-input') === 0;
- var parent = isGlobal ? (document.querySelector('.tb-search') || inputEl.offsetParent || document.body) : (inputEl.offsetParent || document.body);
- var overlay = _shMakeOverlay(id, history);
- overlay.style.position = 'absolute'; overlay.style.boxSizing = 'border-box';
- if (isGlobal) {
- var tbSearch = document.querySelector('.tb-search');
- if (tbSearch) {
- var inpRect = inputEl.getBoundingClientRect();
- var contRect = tbSearch.getBoundingClientRect();
- overlay.style.left = (inpRect.left - contRect.left) + 'px';
- overlay.style.top = (inpRect.bottom - contRect.top + 4) + 'px';
- } else { overlay.style.left = '0'; overlay.style.top = 'calc(100% + 6px)'; }
- overlay.style.width = Math.max(inputEl.offsetWidth, _shOverlayWidth) + 'px';
- } else {
- overlay.style.left = inputEl.offsetLeft + 'px';
- overlay.style.top = (inputEl.offsetTop + inputEl.offsetHeight + 4) + 'px';
- overlay.style.width = Math.max(inputEl.offsetWidth, _shOverlayWidth) + 'px';
- }
- parent.appendChild(overlay);
- _shOverlays[id] = overlay;
- var reposition = function(){
- if (!_shOverlays[id] || !_shOverlays[id].isConnected || !_shInputs[id] || !_shInputs[id].isConnected) return;
- try {
- if (isGlobal) {
- var tb2 = document.querySelector('.tb-search');
- if (tb2 && _shInputs[id]) {
- var ir = _shInputs[id].getBoundingClientRect();
- var cr = tb2.getBoundingClientRect();
- _shOverlays[id].style.left = (ir.left - cr.left) + 'px';
- _shOverlays[id].style.top = (ir.bottom - cr.top + 4) + 'px';
- }
- return;
- }
- var inp = _shInputs[id];
- var pr = inp.offsetParent || document.body;
- if (_shOverlays[id].parentElement !== pr) pr.appendChild(_shOverlays[id]);
- _shOverlays[id].style.left = inp.offsetLeft + 'px';
- _shOverlays[id].style.top = (inp.offsetTop + inp.offsetHeight + 4) + 'px';
- _shOverlays[id].style.width = Math.max(inp.offsetWidth, _shOverlayWidth) + 'px';
- } catch(e){}
- };
- _shRepositionHandlers[id] = reposition;
- window.addEventListener('scroll', reposition, { passive: true, capture: true });
- window.addEventListener('resize', reposition, { passive: true });
-}
-
-function _shHideDropdown(id) {
- _shCancelHide(id);
- if (_shOverlays[id]) {
- if (_shRepositionHandlers[id]) {
- window.removeEventListener('scroll', _shRepositionHandlers[id], true);
- window.removeEventListener('resize', _shRepositionHandlers[id]);
- delete _shRepositionHandlers[id];
- }
- try { _shOverlays[id].remove(); } catch(e) {}
- delete _shOverlays[id];
- }
-}
-
-function _shHideAll() { for (var k in _shOverlays) _shHideDropdown(k); }
-
-function _shFindInputs() {
- for (var i = 0; i < _shInputSelectors.length; i++) {
- var sel = _shInputSelectors[i];
- var els = document.querySelectorAll(sel);
- for (var j = 0; j < els.length; j++) {
- var key = sel + '-' + j;
- if (!_shInputs[key] || !_shInputAlive(key)) _shAttachToInput(key, els[j]);
- }
- }
-}
-
-function startSearchHistory() {
- _shFindInputs();
- if (_shPollTimer) clearInterval(_shPollTimer);
- _shPollTimer = setInterval(_shFindInputs, 3000);
- if (_shBodyObserver) _shBodyObserver.disconnect();
- _shBodyObserver = new MutationObserver(function(){ _shFindInputs(); });
- _shBodyObserver.observe(document.body || document.documentElement, { childList: true, subtree: true });
-}
-
-function stopSearchHistory() {
- _shCancelAllHide();
- _shHideAll();
- if (_shPollTimer) { clearInterval(_shPollTimer); _shPollTimer = null; }
- if (_shBodyObserver) { _shBodyObserver.disconnect(); _shBodyObserver = null; }
- for (var k in _shHandlers) {
- if (_shInputs[k]) {
- _shInputs[k].removeEventListener('mouseenter', _shHandlers[k].mouseenter);
- _shInputs[k].removeEventListener('mouseleave', _shHandlers[k].mouseleave);
- _shInputs[k].removeEventListener('focus', _shHandlers[k].focus);
- _shInputs[k].removeEventListener('blur', _shHandlers[k].blur);
- _shInputs[k].removeEventListener('input', _shHandlers[k].input);
- }
- }
- _shInputs = {}; _shHandlers = {}; _shOverlays = {}; _shRepositionHandlers = {}; _shHideTimers = {};
-}
-
 var featureState = {};
 
 async function loadFeatureState() {
@@ -818,12 +529,10 @@ async function loadFeatureState() {
  if (saved.clickToPlay === undefined) saved.clickToPlay = true;
  if (saved.lyricAlign === undefined) saved.lyricAlign = 'center';
  if (saved.lyricSpacing === undefined) saved.lyricSpacing = 0;
- if (saved.searchHistory === undefined) saved.searchHistory = true;
  if (saved.accountSwitcher === undefined) saved.accountSwitcher = true;
  featureState = saved;
  } else {
  featureState = {
- artistSort: true,
  clickToPlay: true,
  lyricHide: true,
  pluginBtn: true,
@@ -831,7 +540,6 @@ async function loadFeatureState() {
  effectMode: 'snow',
  lyricAlign: 'center',
  lyricSpacing: 0,
- searchHistory: true,
  accountSwitcher: true,
  };
  }
@@ -1158,14 +866,23 @@ function ensureButton(maxAttempts) {
  if (maxAttempts === undefined) maxAttempts = 20;
  if (mountButton()) return true;
  if (maxAttempts <= 0) return false;
- setTimeout(function() { ensureButton(maxAttempts - 1); }, 300);
+ if (as_ensureTimer) { clearTimeout(as_ensureTimer); as_ensureTimer = null; }
+ as_ensureTimer = setTimeout(function() {
+ as_ensureTimer = null;
+ // 已经停用时不要继续挂载，否则关掉插件后按钮又冒出来
+ if (as_started) ensureButton(maxAttempts - 1);
+ }, 300);
  return false;
 }
 
 // ========== 生命周期 ==========
 
 function asStart(_ctx) {
- as_ctx = _ctx;
+ // 幂等：设置面板里切换任意功能都会调用到这里，
+ // 不拦的话每次都会新建 observer / interval，旧的泄漏后会在停用后把按钮加回来
+ if (as_started) { as_ctx = _ctx || as_ctx; injectCSS(); return; }
+ as_started = true;
+ as_ctx = _ctx || ctx;
 
  injectCSS();
 
@@ -1184,9 +901,10 @@ function asStart(_ctx) {
  localStorage.removeItem('as_just_switched');
  var refreshAttempts = [500, 1500, 3000];
  refreshAttempts.forEach(function(delay) {
- setTimeout(function() {
+ var rt = setTimeout(function() {
  try {
- var us = ctx.pinia._s.get('user');
+ var c = as_ctx || ctx;
+ var us = (c && c.pinia && c.pinia._s) ? c.pinia._s.get('user') : null;
  if (!us) return;
  // 确保 fetchUserInfo 不被 guard 挡住
  us.hasFetchedUserInfo = false;
@@ -1195,6 +913,7 @@ function asStart(_ctx) {
  console.warn('[账号切换] fetchUserInfo 重试失败:', e);
  }
  }, delay);
+ as_refreshTimers.push(rt);
  });
  }
 
@@ -1208,7 +927,9 @@ function asStart(_ctx) {
 
  // 轮询检测登录变化（无条件启动；未登录时 captureCurrent 返回 null 自动跳过）
  as_pollTimer = setInterval(function() {
- if (!ctx || !ctx.pinia) return;
+ if (!as_started) return;
+ var c = as_ctx || ctx;
+ if (!c || !c.pinia) return;
  var now = captureCurrent();
  if (!now) return;
  if (now.userid !== lastUserId || now.token !== lastToken) {
@@ -1218,29 +939,30 @@ function asStart(_ctx) {
  }
  }, 3000);
 
- // 注入切换按钮
- var as_sidebarObserver = new MutationObserver(function(){ mountButton(); });
- as_sidebarObserver.observe(document.body || document.documentElement, { childList: true, subtree: true });
- as_cleanupDom = function() { as_sidebarObserver.disconnect(); as_sidebarObserver = null; };
+ // 注入切换按钮：观察侧栏重渲染，按钮被移除时自动补回
+ as_nodeObserver = new MutationObserver(function() {
+ if (as_started) mountButton();
+ });
+ as_nodeObserver.observe(document.body || document.documentElement, { childList: true, subtree: true });
  ensureButton(30);
 
  console.log('[账号切换] 已激活 v9');
 }
 
-var as_cleanupDom = null;
-
 function asStop() {
+ as_started = false;
  if (as_pollTimer) { clearInterval(as_pollTimer); as_pollTimer = null; }
  if (as_trySaveTimer) { clearTimeout(as_trySaveTimer); as_trySaveTimer = null; }
+ if (as_ensureTimer) { clearTimeout(as_ensureTimer); as_ensureTimer = null; }
+ as_refreshTimers.forEach(function(t) { clearTimeout(t); });
+ as_refreshTimers = [];
  as_trySaveRetries = 0;
- if (typeof as_cleanupDom === 'function') as_cleanupDom();
- as_cleanupDom = null;
+ if (as_nodeObserver) { as_nodeObserver.disconnect(); as_nodeObserver = null; }
  var st = document.getElementById(AS_STYLE_ID);
  if (st) st.remove();
- document.querySelectorAll('.as-ol, .as-dd').forEach(function(el) { el.remove(); });
- document.querySelectorAll('.as-btn').forEach(function(el) { el.remove(); });
+ document.querySelectorAll('.as-ol, .as-dd, .as-btn').forEach(function(el) { el.remove(); });
  // 注意：不要在这里把共享的 ctx 置 null，否则设置面板里关闭“多账号切换”会连累
- // 其他功能（顶部插件按钮、搜索历史等）全部失效，且重新开启时 asStart(ctx) 拿到 null
+ // 其他功能（顶部插件按钮等）全部失效，且重新开启时 asStart(ctx) 拿到 null
 }
 
 
@@ -1251,11 +973,9 @@ export async function activate(_ctx) {
 
  await loadFeatureState();
 
- if (featureState.artistSort) startArtistSort();
  if (featureState.clickToPlay) startClickToPlay();
  if (featureState.lyricHide) startLyricHide();
  if (featureState.pluginBtn) startPluginBtn();
- if (featureState.searchHistory) startSearchHistory();
  if (featureState.effect) startEffect(featureState.effectMode || 'snow');
  startLyricAlign(featureState.lyricAlign || 'center');
  if (featureState.accountSwitcher) { asStart(ctx); }
@@ -1267,11 +987,9 @@ export async function activate(_ctx) {
  setup: function() {
  var state = ctx.vue.reactive({
  features: [
- { id: 'artistSort', icon: '🔥', label: '歌手热门排序', desc: '歌手详情页默认按热门排序', enabled: featureState.artistSort },
  { id: 'clickToPlay', icon: '👆', label: '单击播放', desc: '单击歌曲任意位置即可播放', enabled: featureState.clickToPlay },
  { id: 'lyricHide', icon: '🙈', label: '歌词界面完全沉浸', desc: '控制栏和工具栏自动隐藏', enabled: featureState.lyricHide },
  { id: 'pluginBtn', icon: '🔧', label: '顶部插件管理入口', desc: '搜索框右侧添加插件快捷按钮', enabled: featureState.pluginBtn },
- { id: 'searchHistory', icon: '🕐', label: '搜索历史', desc: '搜索框显示历史搜索记录', enabled: featureState.searchHistory },
  { id: 'accountSwitcher', icon: '🔄', label: '多账号切换', desc: '侧栏显示多账号切换按钮', enabled: featureState.accountSwitcher !== false },
  ],
  });
@@ -1286,11 +1004,9 @@ export async function activate(_ctx) {
  state.features.forEach(function(f) { featureState[f.id] = f.enabled; });
  saveFeatureState();
  state.features.forEach(function(f) {
- if (f.id === 'artistSort') { f.enabled ? startArtistSort() : stopArtistSort(); }
- else if (f.id === 'clickToPlay') { f.enabled ? startClickToPlay() : stopClickToPlay(); }
+ if (f.id === 'clickToPlay') { f.enabled ? startClickToPlay() : stopClickToPlay(); }
  else if (f.id === 'lyricHide') { f.enabled ? startLyricHide() : stopLyricHide(); }
  else if (f.id === 'pluginBtn') { f.enabled ? startPluginBtn() : stopPluginBtn(); }
- else if (f.id === 'searchHistory') { f.enabled ? startSearchHistory() : stopSearchHistory(); }
  else if (f.id === 'accountSwitcher') { f.enabled ? asStart(ctx) : asStop(); }
  });
  }, { deep: true });
@@ -1455,11 +1171,9 @@ export async function activate(_ctx) {
 
 export function deactivate() {
  asStop();
- stopArtistSort();
  stopClickToPlay();
  stopLyricHide();
  stopPluginBtn();
- stopSearchHistory();
  stopEffect();
  stopLyricAlign();
 
