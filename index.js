@@ -1,8 +1,8 @@
-// ===== 小功能 v1.5.2（含多账号切换） =====
+// ===== 小功能 v1.5.3（含多账号切换） =====
 // Author: 张三 + Max8808
-// 小功能：单击播放 + 歌词界面完全沉浸 + 顶部插件按钮 + 10种桌面特效 + 多账号切换
+// 小功能：单击播放 + 歌词界面完全沉浸 + 10种桌面特效 + 多账号切换
 // 注意：右键下载已独立为单独插件，如需使用请安装 right-click-download
-// 修复：关闭插件后「切换账号」按钮残留、点击无反应；asStart 幂等、asStop 彻底清理
+// v1.5.3：移除「顶部插件管理入口 / 歌词对齐 / 歌词行距」，设置面板改为 3 列
 // v1.5.2：移除「歌手热门排序」与「搜索历史」两个功能（按用户要求）
 // 在插件设置面板中可独立开关每个功能
 var ctx = null;
@@ -238,83 +238,6 @@ function stopEffect() {
  _effectParticles = [];
 }
 
-// ================== 6. 顶部插件快捷按钮 ==================
-
-var pbBtn = null;
-var pbStyle = null;
-var pbCheckLoop = null;
-
-function startPluginBtn() {
- if (pbCheckLoop) return;
- if (!document.getElementById('zhs-pb-style')) {
- var s = document.createElement('style');
- s.id = 'zhs-pb-style';
- s.textContent = [
- '.zhs-plugin-btn {',
- ' width: 34px; height: 34px;',
- ' display: flex; align-items: center; justify-content: center;',
- ' border-radius: 50%;',
- ' transition: all 0.2s;',
- ' background: transparent; border: none;',
- ' color: var(--color-text-main); opacity: 0.6;',
- ' cursor: pointer; flex-shrink: 0;',
- ' margin-left: 2px;',
- '}',
- '.zhs-plugin-btn:hover {',
- ' opacity: 1;',
- ' background-color: var(--control-hover-bg);',
- '}',
- '.zhs-plugin-btn svg {',
- ' width: 18px; height: 18px;',
- '}',
- ].join('\n');
- document.head.appendChild(s);
- pbStyle = s;
- }
- pbCheckLoop = setInterval(function() {
- var nav = document.querySelector('.titlebar-nav');
- if (!nav) return;
- var searchBox = nav.querySelector('.tb-search');
- if (!searchBox) return;
- if (document.getElementById('zhs-pb-btn')) { pbBtn = document.getElementById('zhs-pb-btn'); return; }
- var btn = document.createElement('button');
- btn.id = 'zhs-pb-btn';
- btn.className = 'zhs-plugin-btn nav-btn';
- btn.title = '插件管理';
- btn.innerHTML = [
- '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"',
- ' stroke-linecap="round" stroke-linejoin="round">',
- ' <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
- '</svg>',
- ].join('');
- btn.addEventListener('click', function() {
- if (ctx && ctx.router) {
- ctx.router.push('/main/settings/plugins');
- }
- });
- searchBox.parentNode.insertBefore(btn, searchBox.nextSibling);
- pbBtn = btn;
- // 不停止轮询：Vue 重渲染移除按钮后会自动重新注入
- }, 800);
-}
-
-function stopPluginBtn() {
- if (pbCheckLoop) {
- clearInterval(pbCheckLoop);
- pbCheckLoop = null;
- }
- if (pbBtn) {
- pbBtn.remove();
- pbBtn = null;
- }
- if (pbStyle) {
- pbStyle.remove();
- pbStyle = null;
- }
- var s = document.getElementById('zhs-pb-style');
- if (s) s.remove();
-}
-
 // ================ 3. 单击任意位置播放 ================
 // 单击歌曲列表的任意位置（歌名、歌手等）即可播放
 // 不影响已有按钮操作（播放图标、菜单等）
@@ -454,72 +377,6 @@ function stopLyricHide() {
  lhRemoveCSS();
  lhCleanup();
 }
-// ================== 7. 歌词对齐切换 ==================
-
-var laStyle = null;
-var laTimer = null;
-var laLastCSS = null;
-
-function laGetCSS(align, spacing, padding) {
- var rowJustify = align === 'center' ? 'center' : (align === 'left' ? 'flex-start' : 'flex-end');
- padding = padding || 180;
- var rules = [
- '.lyric-scroller .lyric-row { justify-content: ' + rowJustify + ' !important; position: relative; }',
- '.lyric-scroller .lyric-line { text-align: ' + align + ' !important; }',
- align === 'left' ? '.lyric-scroller { padding-left: ' + padding + 'px !important; }' : (align === 'right' ? '.lyric-scroller { padding-right: ' + padding + 'px !important; }' : undefined),
- '.static-lyric-list { text-align: ' + align + ' !important; }',
- '.static-lyric-row { text-align: ' + align + ' !important; }',
- align === 'left' ? '.cover-mode .lyric-side { padding-left: 108px !important; }' : undefined,
- ];
- // 当前演唱行前加引导圆点
- if (align === 'left') {
- rules.push('.lyric-scroller .lyric-line[data-echo-lyric-current=\"true\"]::before { content: \"\"; position: absolute; left: -34px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; border-radius: 50%; background: var(--color-primary); opacity: 0.8; pointer-events: none; }');
- } else if (align === 'right') {
- rules.push('.lyric-scroller .lyric-line[data-echo-lyric-current=\"true\"]::before { content: \"\"; position: absolute; right: -34px; left: auto; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; border-radius: 50%; background: var(--color-primary); opacity: 0.8; pointer-events: none; }');
- }
- // 行距（0 = 不覆盖，使用默认）
- if (spacing !== undefined && spacing !== 0) {
- rules.push('.lyric-scroller .lyric-row:not(:last-child) { margin-bottom: ' + spacing + 'px !important; }');
- }
- return rules.filter(function(s) { return s; }).join('\n');
-}
-
-function laApply(align, spacing) {
- var padding = 180;
- var css = laGetCSS(align, spacing, padding);
- // CSS 内容没变时跳过，避免每 500ms 重建 style 标签
- if (laStyle && laLastCSS === css && laStyle.isConnected) return;
- laRemove();
- var s = document.createElement('style');
- s.id = 'zhs-la-style';
- s.textContent = css;
- document.head.appendChild(s);
- laLastCSS = css;
- laStyle = s;
-}
-
-function laRemove() {
- if (laStyle) { laStyle.remove(); laStyle = null; }
- laLastCSS = null;
-}
-
-function startLyricAlign(align) {
- align = align || 'center';
- var spacing = featureState.lyricSpacing || 0;
- if (laTimer) return;
- laTimer = setInterval(function() {
- var scroller = document.querySelector('.lyric-scroller');
- if (scroller) {
- laApply(align, spacing);
- }
- }, 500);
-}
-
-function stopLyricAlign() {
- if (laTimer) { clearInterval(laTimer); laTimer = null; }
- laRemove();
-}
-
 var featureState = {};
 
 async function loadFeatureState() {
@@ -527,19 +384,14 @@ async function loadFeatureState() {
  if (saved) {
  // 兼容旧版本，新功能默认启用
  if (saved.clickToPlay === undefined) saved.clickToPlay = true;
- if (saved.lyricAlign === undefined) saved.lyricAlign = 'center';
- if (saved.lyricSpacing === undefined) saved.lyricSpacing = 0;
  if (saved.accountSwitcher === undefined) saved.accountSwitcher = true;
  featureState = saved;
  } else {
  featureState = {
  clickToPlay: true,
  lyricHide: true,
- pluginBtn: true,
  effect: false,
  effectMode: 'snow',
- lyricAlign: 'center',
- lyricSpacing: 0,
  accountSwitcher: true,
  };
  }
@@ -962,7 +814,7 @@ function asStop() {
  if (st) st.remove();
  document.querySelectorAll('.as-ol, .as-dd, .as-btn').forEach(function(el) { el.remove(); });
  // 注意：不要在这里把共享的 ctx 置 null，否则设置面板里关闭“多账号切换”会连累
- // 其他功能（顶部插件按钮等）全部失效，且重新开启时 asStart(ctx) 拿到 null
+ // 其他功能全部失效，且重新开启时 asStart(ctx) 拿到 null
 }
 
 
@@ -975,9 +827,7 @@ export async function activate(_ctx) {
 
  if (featureState.clickToPlay) startClickToPlay();
  if (featureState.lyricHide) startLyricHide();
- if (featureState.pluginBtn) startPluginBtn();
  if (featureState.effect) startEffect(featureState.effectMode || 'snow');
- startLyricAlign(featureState.lyricAlign || 'center');
  if (featureState.accountSwitcher) { asStart(ctx); }
 
  var h = ctx.vue.h;
@@ -989,14 +839,11 @@ export async function activate(_ctx) {
  features: [
  { id: 'clickToPlay', icon: '👆', label: '单击播放', desc: '单击歌曲任意位置即可播放', enabled: featureState.clickToPlay },
  { id: 'lyricHide', icon: '🙈', label: '歌词界面完全沉浸', desc: '控制栏和工具栏自动隐藏', enabled: featureState.lyricHide },
- { id: 'pluginBtn', icon: '🔧', label: '顶部插件管理入口', desc: '搜索框右侧添加插件快捷按钮', enabled: featureState.pluginBtn },
  { id: 'accountSwitcher', icon: '🔄', label: '多账号切换', desc: '侧栏显示多账号切换按钮', enabled: featureState.accountSwitcher !== false },
  ],
  });
  var currentEffectMode = ctx.vue.ref(featureState.effectMode || 'snow');
  var effectActive = ctx.vue.ref(!!featureState.effect);
- var currentAlign = ctx.vue.ref(featureState.lyricAlign || 'center');
- var currentSpacing = ctx.vue.ref(featureState.lyricSpacing || 0);
 
  ctx.vue.watch(function() {
  return state.features.map(function(f) { return f.enabled; });
@@ -1006,7 +853,6 @@ export async function activate(_ctx) {
  state.features.forEach(function(f) {
  if (f.id === 'clickToPlay') { f.enabled ? startClickToPlay() : stopClickToPlay(); }
  else if (f.id === 'lyricHide') { f.enabled ? startLyricHide() : stopLyricHide(); }
- else if (f.id === 'pluginBtn') { f.enabled ? startPluginBtn() : stopPluginBtn(); }
  else if (f.id === 'accountSwitcher') { f.enabled ? asStart(ctx) : asStop(); }
  });
  }, { deep: true });
@@ -1045,76 +891,11 @@ export async function activate(_ctx) {
 
  return function() {
  return h('div', { style: { display: 'flex', 'flex-direction': 'column', gap: '6px' } }, [
- h('div', { style: { display: 'grid', 'grid-template-columns': '1fr 1fr', gap: '6px' } },
+ h('div', { style: { display: 'grid', 'grid-template-columns': '1fr 1fr 1fr', gap: '6px' } },
  state.features.map(function(f) {
  return toggleRow(f.icon, f.label, f.desc, f.enabled, function() { f.enabled = !f.enabled; });
  })
  ),
- // 歌词对齐 + 行距（同一排）
- h('div', { style: { display: 'grid', 'grid-template-columns': '1fr 1fr', gap: '6px', padding: '8px 6px', 'border-radius': '8px', background: 'var(--card-bg, rgba(255,255,255,0.04))' } }, [
- // 第一列：歌词对齐
- h('div', { style: { display: 'flex', 'align-items': 'center', gap: '4px' } }, [
- h('span', { style: { 'font-size': '11px', color: 'var(--color-text-secondary)', 'flex-shrink': '0' } }, '📝 歌词对齐'),
- ['left', 'center', 'right'].map(function(a) {
- var active = currentAlign.value === a;
- var label = { left: '左对齐', center: '居中', right: '右对齐' }[a];
- return h('div', {
- key: a,
- style: {
- cursor: 'pointer', padding: '3px 8px', 'border-radius': '5px',
- 'font-size': '12px', 'font-weight': active ? '600' : '400',
- background: active ? 'var(--color-primary, #4caf50)' : 'transparent',
- color: active ? '#fff' : 'var(--color-text-secondary)',
- border: active ? '1px solid var(--color-primary, #4caf50)' : '1px solid transparent',
- transition: 'all 0.15s',
- },
- onClick: function() {
- currentAlign.value = a;
- featureState.lyricAlign = a;
- saveFeatureState();
- stopLyricAlign();
- startLyricAlign(a);
- },
- }, label);
- }),
- ]),
- // 第二列：歌词行距
- h('div', { style: { display: 'flex', 'align-items': 'center', gap: '4px' } }, [
- h('span', { style: { 'font-size': '11px', color: 'var(--color-text-secondary)', 'flex-shrink': '0' } }, '📏 歌词行距'),
- h('input', {
- type: 'range',
- min: -20,
- max: 30,
- step: 1,
- value: currentSpacing.value,
- style: { flex: '1', height: '3px', cursor: 'pointer', 'accent-color': 'var(--color-primary, #4caf50)' },
- onInput: function(e) {
- var v = parseInt(e.target.value) || 0;
- currentSpacing.value = v;
- featureState.lyricSpacing = v;
- saveFeatureState();
- stopLyricAlign();
- startLyricAlign(currentAlign.value || 'center');
- },
- }),
- h('div', { style: { display: 'flex', 'align-items': 'center', gap: '2px' } }, [
- h('span', { style: { 'font-size': '11px', 'font-weight': '600', 'min-width': '24px', 'text-align': 'right', color: currentSpacing.value === 0 ? 'var(--color-text-secondary)' : 'var(--color-primary, #4caf50)' } },
- currentSpacing.value === 0 ? '—' : currentSpacing.value + 'px'
- ),
- h('span', { style: { 'font-size': '10px', cursor: 'pointer', padding: '1px 5px', 'border-radius': '4px', color: currentSpacing.value === 0 ? 'var(--color-text-secondary)' : 'var(--color-primary, #4caf50)', border: '1px solid ' + (currentSpacing.value === 0 ? 'var(--color-text-secondary)' : 'var(--color-primary, #4caf50)'), opacity: '0.7' },
- onClick: function() {
- if (currentSpacing.value !== 0) {
- currentSpacing.value = 0;
- featureState.lyricSpacing = 0;
- saveFeatureState();
- stopLyricAlign();
- startLyricAlign(currentAlign.value || 'center');
- }
- }
- }, '默认'),
- ]),
- ]),
- ]),
  h('div', {
  style: {
  display: 'flex', gap: '3px',
@@ -1161,7 +942,7 @@ export async function activate(_ctx) {
  disposeSettings = ctx.ui.settings.define({
  id: 'xiaotoolkit',
  title: '小功能',
- description: '签到 + 独立开关每个功能，改动即时生效',
+ description: '单击播放 + 歌词沉浸 + 桌面特效 + 多账号切换',
  component: SettingsComp,
  });
 }
@@ -1173,9 +954,7 @@ export function deactivate() {
  asStop();
  stopClickToPlay();
  stopLyricHide();
- stopPluginBtn();
  stopEffect();
- stopLyricAlign();
 
  if (disposeSettings) { disposeSettings(); disposeSettings = null; }
  ctx = null;
